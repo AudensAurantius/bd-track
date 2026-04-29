@@ -1,0 +1,11 @@
+[Unit]
+Description=bd-timew idle server stop — stop Dolt servers idle longer than threshold
+
+[Service]
+Type=oneshot
+ExecStart=${BD_TIMEW_PATH} idle-stop --hours ${IDLE_STOP_HOURS}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

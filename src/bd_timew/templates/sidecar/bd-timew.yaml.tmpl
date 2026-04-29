@@ -1,0 +1,28 @@
+# bd-timew per-project sidecar — maps Beads issue labels to a billing tuple.
+#
+# Resolution order (first match wins):
+#   1. Per-issue `case:<string>` label on the bead (escape hatch)
+#   2. First matching pattern in `patterns:` below (regex on space-joined labels)
+#   3. The `default:` block below
+#
+# Run `bd-timew resolve <bead-id>` to dry-run resolution for any bead.
+
+default:
+  client: ""        # default client when no pattern matches; leave blank for "(none)"
+  case: ""          # default case
+  svc: ""           # default service category
+
+patterns:
+  # Each entry has `match:` (Python regex) plus any of client/case/svc to set.
+  # Captured groups can be referenced as {group_name} in the value.
+  #
+  # Example:
+  # - match: "area:billable"
+  #   client: "AcmeCo"
+  #   case: "Sprint Q2"
+  #   svc: "Engineering"
+  #
+  # - match: "area:internal"
+  #   client: "internal"
+  #   svc: "(none)"
+  []

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run bd-timew Beads cleanup on a regular schedule
+
+[Timer]
+OnCalendar=${CHECK_INTERVAL}
+Persistent=true
+Unit=${SERVICE_NAME}.service
+
+[Install]
+WantedBy=timers.target

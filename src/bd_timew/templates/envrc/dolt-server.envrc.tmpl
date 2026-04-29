@@ -1,0 +1,4 @@
+# bd-timew: beads dolt server — managed by bd-timew init-project
+# Re-run bd-timew init-project --server to update.
+bd dolt status &>/dev/null || bd dolt start
+export BEADS_DOLT_PASSWORD="$(pass show ${PASS_PATH} | head -1)"

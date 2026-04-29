@@ -1,0 +1,10 @@
+[Unit]
+Description=Run bd-timew idle server stop check hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=${SERVICE_NAME}.service
+
+[Install]
+WantedBy=timers.target
