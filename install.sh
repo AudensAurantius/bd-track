@@ -1,0 +1,123 @@
+#!/usr/bin/env sh
+# bd-timew installer — fetches system deps and installs the tool via pipx.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/AudensAurantius/bd-timew/main/install.sh | sh
+#
+# Or for a specific version:
+#   curl -fsSL https://raw.githubusercontent.com/AudensAurantius/bd-timew/main/install.sh | sh -s -- v0.1.0
+#
+# Environment:
+#   BD_TIMEW_REF    Git ref to install (default: main)
+#   BD_TIMEW_REPO   Repo URL (default: https://github.com/AudensAurantius/bd-timew.git)
+
+set -eu
+
+REF="${1:-${BD_TIMEW_REF:-main}}"
+REPO="${BD_TIMEW_REPO:-https://github.com/AudensAurantius/bd-timew.git}"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+log()  { printf '\033[1;34m[bd-timew install]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[bd-timew install]\033[0m %s\n' "$*" >&2; }
+fail() { printf '\033[1;31m[bd-timew install]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Detect package manager
+# ---------------------------------------------------------------------------
+detect_pkg_mgr() {
+    if command -v brew >/dev/null 2>&1; then
+        echo brew
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo apt
+    elif command -v dnf >/dev/null 2>&1; then
+        echo dnf
+    elif command -v pacman >/dev/null 2>&1; then
+        echo pacman
+    else
+        echo unknown
+    fi
+}
+
+PKG_MGR=$(detect_pkg_mgr)
+log "Detected package manager: $PKG_MGR"
+
+# ---------------------------------------------------------------------------
+# Install a system package via the detected manager
+# ---------------------------------------------------------------------------
+install_pkg() {
+    pkg="$1"
+    case "$PKG_MGR" in
+        brew)   brew install "$pkg" ;;
+        apt)    sudo apt-get install -y "$pkg" ;;
+        dnf)    sudo dnf install -y "$pkg" ;;
+        pacman) sudo pacman -S --noconfirm "$pkg" ;;
+        *)      fail "No supported package manager. Install '$pkg' manually and re-run." ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Ensure timew is installed
+# ---------------------------------------------------------------------------
+if command -v timew >/dev/null 2>&1; then
+    log "timew already installed: $(timew --version 2>/dev/null | head -1)"
+else
+    log "Installing timew (Timewarrior)..."
+    case "$PKG_MGR" in
+        brew)   install_pkg timewarrior ;;
+        apt)    install_pkg timewarrior ;;
+        dnf)    install_pkg timew ;;
+        pacman) install_pkg timew ;;
+        *)      fail "Cannot auto-install timew. See https://timewarrior.net/docs/install/" ;;
+    esac
+fi
+
+# ---------------------------------------------------------------------------
+# Ensure pipx is installed
+# ---------------------------------------------------------------------------
+if command -v pipx >/dev/null 2>&1; then
+    log "pipx already installed"
+else
+    log "Installing pipx..."
+    case "$PKG_MGR" in
+        brew)   install_pkg pipx ;;
+        apt)    install_pkg pipx ;;
+        dnf)    install_pkg pipx ;;
+        pacman) install_pkg python-pipx ;;
+        *)      fail "Cannot auto-install pipx. See https://pipx.pypa.io/stable/installation/" ;;
+    esac
+    pipx ensurepath
+fi
+
+# ---------------------------------------------------------------------------
+# Check for bd (beads) — install via cargo if available, otherwise warn
+# ---------------------------------------------------------------------------
+if command -v bd >/dev/null 2>&1; then
+    log "bd (beads) already installed: $(bd --version 2>/dev/null | head -1)"
+else
+    if command -v cargo >/dev/null 2>&1; then
+        log "Installing bd (beads) via cargo..."
+        cargo install beads || warn "cargo install beads failed; install manually."
+    else
+        warn "bd (beads) not found and cargo unavailable for auto-install."
+        warn "Install it from https://github.com/steveyegge/beads or via 'cargo install beads' after installing Rust."
+        warn "Continuing — bd-timew will be installed but won't function until bd is on PATH."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Install bd-timew via pipx
+# ---------------------------------------------------------------------------
+log "Installing bd-timew from $REPO@$REF..."
+pipx install --force "git+$REPO@$REF"
+
+# ---------------------------------------------------------------------------
+# Verify
+# ---------------------------------------------------------------------------
+if command -v bd-timew >/dev/null 2>&1; then
+    log "Installed: $(bd-timew --help 2>&1 | head -1 || echo 'bd-timew')"
+    log "Run 'bd-timew config init' inside a project with .beads/ to scaffold a sidecar."
+else
+    warn "bd-timew installed but not on PATH. You may need to restart your shell or run 'pipx ensurepath'."
+fi
