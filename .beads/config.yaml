@@ -57,3 +57,7 @@ dolt.shared-server: true
 
 sync.remote: "git+ssh://git@github.com/AudensAurantius/bd-timew.git"
 dolt.auto-push: false
+
+dolt.auto-commit: "batch"
+
+backup.git-push: false
