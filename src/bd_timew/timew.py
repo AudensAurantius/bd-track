@@ -45,8 +45,14 @@ def cmd_start(issue_id: str, *, dry_run: bool = False) -> None:
     record_activity(str(beads_dir.parent.resolve()))
 
 
-def cmd_stop(issue_id: str | None = None) -> None:
-    """Stop the active timew interval (tagged or untagged)."""
+def cmd_stop(issue_id: str | None = None, *, clean: bool = True) -> None:
+    """Stop the active timew interval (tagged or untagged).
+
+    When ``clean`` is True (default), runs a queue sweep afterward to drop any
+    closed/deferred beads from any queue scope. Pass ``clean=False`` (CLI:
+    ``--no-clean``) to skip — useful when stopping a bead that is intentionally
+    closed but should remain queued for a follow-up.
+    """
     # Record activity before stopping so the timestamp reflects last use.
     result = run(["bd", "where"], check=False, capture=True)
     if result.returncode == 0:
@@ -58,10 +64,23 @@ def cmd_stop(issue_id: str | None = None) -> None:
     else:
         run(["timew", "stop"], check=False)
 
+    if clean:
+        # Late import keeps cmd_status / cmd_resolve startup snappy.
+        from bd_timew.queue import cmd_clean
+        try:
+            cmd_clean(quiet=True)
+        except SystemExit:
+            # No active beads workspace — silently skip the sweep.
+            pass
+
 
 def cmd_switch(issue_id: str, *, from_issue_id: str | None = None) -> None:
-    """Stop one bead and start another (non-transactional)."""
-    cmd_stop(from_issue_id)
+    """Stop one bead and start another (non-transactional).
+
+    The intervening clean step is skipped: ``from_issue_id`` typically isn't
+    closed yet, and we're about to re-prime the workspace with ``cmd_start``.
+    """
+    cmd_stop(from_issue_id, clean=False)
     cmd_start(issue_id)
 
 

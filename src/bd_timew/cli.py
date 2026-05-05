@@ -25,6 +25,145 @@ Resolution order for billing tuple (first match wins):
 """
 
 
+def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
+    """Attach the unified ``queue <action>`` parser tree.
+
+    All queue operations are subcommands of ``queue`` (push, unshift, pop,
+    peek, list, remove, clear, clean, generate, prune). The flat top-level
+    forms (``bd-timew push``, etc.) were removed in favor of this shape so
+    the analytical commands (``clean``, ``generate``, ``prune``) live next to
+    the mechanical ones rather than scattered at the top level.
+    """
+    p_queue = sub.add_parser(
+        "queue",
+        help="Bead-execution queue operations (push, pop, list, clean, generate, prune, ...).",
+        description=(
+            "Maintain ordered, scoped queues of beads to work through. Default "
+            "scope resolves from --scope flag → $BD_TIMEW_SCOPE → 'default'. "
+            "The queue file lives at .beads/queue.yaml."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    qsub = p_queue.add_subparsers(dest="queue_action", required=True,
+                                  title="queue actions", metavar="<action>")
+
+    # Common args reused by every action.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--scope", metavar="<scope>", default=None,
+        help="Queue scope name. Resolved: --scope flag → $BD_TIMEW_SCOPE → 'default'.",
+    )
+    common.add_argument(
+        "--project-dir", type=Path, default=None,
+        help="Project root containing .beads/. Defaults to active workspace.",
+    )
+    common.add_argument(
+        "--titles", "-t", action="store_true", default=False,
+        help="Show bead titles alongside IDs (fetches each bead from bd; slower).",
+    )
+
+    # -- push / unshift / pop / peek / list / remove / clear -----------------
+    p_push = qsub.add_parser("push", parents=[common],
+                             help="Append one or more beads to the tail of a queue scope.",
+                             formatter_class=HelpFormatter)
+    p_push.add_argument("ids", nargs="+", metavar="<id>")
+
+    p_unshift = qsub.add_parser("unshift", parents=[common],
+                                help="Prepend a bead to the head of a queue scope.",
+                                formatter_class=HelpFormatter)
+    p_unshift.add_argument("bead_id", metavar="<id>")
+
+    qsub.add_parser("pop", parents=[common],
+                    help="Remove and print the head bead of a queue scope.",
+                    formatter_class=HelpFormatter)
+    qsub.add_parser("peek", parents=[common],
+                    help="Print the head bead of a queue scope without removing.",
+                    formatter_class=HelpFormatter)
+    qsub.add_parser("list", parents=[common],
+                    help="List queue contents (all scopes, or one with --scope).",
+                    formatter_class=HelpFormatter)
+
+    p_remove = qsub.add_parser("remove", parents=[common],
+                               help="Remove one or more beads from a queue scope.",
+                               formatter_class=HelpFormatter)
+    p_remove.add_argument("ids", nargs="+", metavar="<id>")
+
+    qsub.add_parser("clear", parents=[common],
+                    help="Empty a queue scope (--scope all clears every scope).",
+                    formatter_class=HelpFormatter)
+
+    # -- clean -- mechanical sweep of stale entries (closed / deferred) ------
+    qsub.add_parser(
+        "clean", parents=[common],
+        help="Remove closed/deferred beads from queue scopes (no confirmation).",
+        description=(
+            "Mechanical sweep: queries bd for the status of every queue entry "
+            "and drops anything closed or deferred. With no --scope, sweeps all "
+            "scopes. Also invoked automatically after `bd-timew stop`."
+        ),
+        formatter_class=HelpFormatter,
+    )
+
+    # -- generate -- build a queue from filters ------------------------------
+    p_gen = qsub.add_parser(
+        "generate", parents=[common],
+        help="Generate a queue from `bd list` search/filter criteria.",
+        description=(
+            "Populate a queue scope from beads matching the given filters. "
+            "Without --append, replaces the existing queue (with confirmation "
+            "if non-empty)."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_gen.add_argument(
+        "--status", default="open,in_progress",
+        help="Comma-separated bd statuses to include (default: open,in_progress).",
+    )
+    p_gen.add_argument(
+        "--label", action="append", default=[], metavar="<label>",
+        help="Require this label (repeatable; AND).",
+    )
+    p_gen.add_argument(
+        "--label-any", action="append", default=[], metavar="<label>",
+        help="Require at least one of these labels (repeatable; OR).",
+    )
+    p_gen.add_argument(
+        "--label-pattern", default=None, metavar="<glob>",
+        help="Filter by label glob pattern (e.g. 'area:*').",
+    )
+    p_gen.add_argument(
+        "--keyword", "-k", default=None, metavar="<text>",
+        help="Title substring match (case-insensitive).",
+    )
+    p_gen.add_argument(
+        "--append", action="store_true", default=False,
+        help="Append matches to existing queue instead of replacing.",
+    )
+    p_gen.add_argument(
+        "--yes", "-y", action="store_true", default=False,
+        help="Skip confirmation when replacing a non-empty queue.",
+    )
+
+    # -- prune -- analytical: identify issues, propose changes ---------------
+    p_prune = qsub.add_parser(
+        "prune", parents=[common],
+        help="Identify stale/scope-mismatched/out-of-order entries; propose changes.",
+        description=(
+            "Analyse one or all queue scopes and surface: stale entries, scope "
+            "mismatches (heuristic), dependency-ordering problems, and missing "
+            "blockers. Prints proposals; prompts for confirmation before applying "
+            "destructive changes (removal of stale entries). Move/reorder/add-"
+            "before recommendations are reported but not auto-applied — they "
+            "require manual judgment."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_prune.add_argument(
+        "--yes", "-y", action="store_true", default=False,
+        help="Apply destructive changes (stale removal) without confirmation.",
+    )
+
+
 def get_cli_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="bd-timew",
@@ -63,13 +202,19 @@ def get_cli_arguments() -> argparse.Namespace:
             "Stops the Timewarrior interval tagged with <issue-id> if given, "
             "otherwise stops all active intervals ('timew stop' with no args). "
             "Passing the issue ID explicitly is strongly recommended when multiple "
-            "sessions may be tracking different beads concurrently."
+            "sessions may be tracking different beads concurrently. After stopping, "
+            "runs `queue clean` automatically to drop any newly-closed beads from "
+            "queue scopes; pass --no-clean to skip."
         ),
         formatter_class=HelpFormatter,
     )
     p_stop.add_argument(
         "issue_id", metavar="<issue-id>", nargs="?", default=None,
         help="Stop only the interval tagged with this bead ID (recommended).",
+    )
+    p_stop.add_argument(
+        "--no-clean", action="store_false", dest="clean", default=True,
+        help="Skip the post-stop queue sweep for closed/deferred beads.",
     )
 
     # -- switch --------------------------------------------------------------
@@ -169,49 +314,61 @@ def get_cli_arguments() -> argparse.Namespace:
     )
     p_server_stop.add_argument("--path", type=Path, default=None)
 
-    # -- queue subcommands (flat top-level, no 'queue' prefix) ---------------
-    _q_parent = argparse.ArgumentParser(add_help=False)
-    _q_parent.add_argument(
-        "--scope", metavar="<scope>", default=None,
-        help="Queue scope name. Resolved: --scope flag → $BD_TIMEW_SCOPE → 'default'.",
-    )
-    _q_parent.add_argument(
-        "--project-dir", type=Path, default=None,
-        help="Project root containing .beads/. Defaults to active workspace.",
-    )
-    _q_parent.add_argument(
-        "--titles", "-t", action="store_true", default=False,
-        help="Show bead titles alongside IDs (fetches each bead from bd; slower).",
-    )
-
-    p_push = sub.add_parser("push", parents=[_q_parent],
-                           help="Append one or more beads to the tail of a queue scope.",
-                           formatter_class=HelpFormatter)
-    p_push.add_argument("ids", nargs="+", metavar="<id>")
-
-    p_unshift = sub.add_parser("unshift", parents=[_q_parent],
-                              help="Prepend a bead to the head of a queue scope.",
-                              formatter_class=HelpFormatter)
-    p_unshift.add_argument("bead_id", metavar="<id>")
-
-    sub.add_parser("pop", parents=[_q_parent],
-                   help="Remove and print the head bead of a queue scope.",
-                   formatter_class=HelpFormatter)
-    sub.add_parser("peek", parents=[_q_parent],
-                   help="Print the head bead of a queue scope without removing.",
-                   formatter_class=HelpFormatter)
-    sub.add_parser("queue", parents=[_q_parent],
-                   help="List queue contents (all scopes, or one with --scope).",
-                   formatter_class=HelpFormatter)
-    p_remove = sub.add_parser("remove", parents=[_q_parent],
-                             help="Remove one or more beads from a queue scope.",
-                             formatter_class=HelpFormatter)
-    p_remove.add_argument("ids", nargs="+", metavar="<id>")
-    sub.add_parser("clear", parents=[_q_parent],
-                   help="Empty a queue scope (--scope all clears every scope).",
-                   formatter_class=HelpFormatter)
+    # -- queue (parent) + push/unshift/pop/peek/list/remove/clear/clean/generate/prune
+    _add_queue_parsers(sub)
 
     return parser.parse_args()
+
+
+def _dispatch_queue(args: argparse.Namespace) -> None:
+    """Route ``bd-timew queue <action>`` to the right queue.py function."""
+    action = args.queue_action
+
+    if action in ("push", "unshift", "pop", "peek", "list", "remove", "clear"):
+        from bd_timew.queue import cmd_queue
+        if action == "push":
+            ids = args.ids
+        elif action == "unshift":
+            ids = [args.bead_id]
+        elif action == "remove":
+            ids = args.ids
+        else:
+            ids = None
+        cmd_queue(
+            action, ids=ids, scope_arg=args.scope,
+            project_dir=args.project_dir, titles=args.titles,
+        )
+        return
+
+    if action == "clean":
+        from bd_timew.queue import cmd_clean
+        cmd_clean(scope_arg=args.scope, project_dir=args.project_dir)
+        return
+
+    if action == "generate":
+        from bd_timew.queue import cmd_generate
+        statuses = [s.strip() for s in args.status.split(",") if s.strip()]
+        cmd_generate(
+            scope_arg=args.scope,
+            project_dir=args.project_dir,
+            statuses=statuses,
+            labels_all=args.label,
+            labels_any=args.label_any,
+            label_pattern=args.label_pattern,
+            keyword=args.keyword,
+            append=args.append,
+            yes=args.yes,
+        )
+        return
+
+    if action == "prune":
+        from bd_timew.queue import cmd_prune
+        cmd_prune(
+            scope_arg=args.scope,
+            project_dir=args.project_dir,
+            yes=args.yes,
+        )
+        return
 
 
 def main() -> None:
@@ -229,7 +386,7 @@ def main() -> None:
         cmd_start(args.issue_id)
     elif args.cmd == "stop":
         from bd_timew.timew import cmd_stop
-        cmd_stop(args.issue_id)
+        cmd_stop(args.issue_id, clean=args.clean)
     elif args.cmd == "switch":
         from bd_timew.timew import cmd_switch
         cmd_switch(args.issue_id, from_issue_id=args.from_issue_id)
@@ -268,18 +425,5 @@ def main() -> None:
     elif args.cmd == "server-stop":
         from bd_timew.server import cmd_server_stop
         cmd_server_stop(args.path)
-    elif args.cmd in ("push", "unshift", "pop", "peek", "queue", "remove", "clear"):
-        from bd_timew.queue import cmd_queue
-        if args.cmd == "push":
-            ids = args.ids
-        elif args.cmd == "unshift":
-            ids = [args.bead_id]
-        elif args.cmd == "remove":
-            ids = args.ids
-        else:
-            ids = None
-        cmd_queue(
-            "list" if args.cmd == "queue" else args.cmd,
-            ids=ids, scope_arg=args.scope,
-            project_dir=args.project_dir, titles=args.titles,
-        )
+    elif args.cmd == "queue":
+        _dispatch_queue(args)
