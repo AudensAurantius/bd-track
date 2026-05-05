@@ -3,6 +3,13 @@
 Configures Beads projects with recommended settings, registers them for
 automated cleanup via systemd timers, and provisions optional Dolt
 server-mode wiring (.envrc + pass credential).
+
+`init-project` bootstraps `bd init` when `.beads/` is missing, writes the
+empirically-verified hang preventer (`dolt.auto-push: false`) directly to
+`.beads/config.yaml` before any `bd config set` call, then applies the
+remaining settings via the bd CLI. See J121-xji for the bootstrap rationale
+and `~/.claude/projects/-home-hactar-Source-J121/memory/pitfalls-beads-dolt-remote.md`
+for the auto-push pitfall analysis.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from bd_timew.util import (
     cleanup_log,
     confirm,
     find_beads_dir,
+    is_interactive,
     prompt,
     root_log,
     run,
@@ -40,6 +48,78 @@ _INTERVAL_ALIASES: dict[str, str] = {
     "weekly": "7d",
     "hourly": "1h",
 }
+
+
+def _bootstrap_bd_init(
+    project_root: Path,
+    *,
+    server_mode: bool | None,
+    sandbox: bool,
+    prefix: str | None,
+    agents_profile: str,
+) -> None:
+    """Run `bd init` in `project_root` when `.beads/` is missing (J121-xji).
+
+    Forwards the recommended flags from the empirically-verified hang-safe
+    init flow: ``--actor bd-timew --dolt-auto-commit batch [--server]
+    [--sandbox] [--prefix ...] [--agents-profile full]``.
+
+    ``--non-interactive`` is intentionally NOT forwarded — bd 1.0.x has been
+    observed to hang under that flag. If the caller is non-interactive, they
+    must supply enough flags that bd init has no prompts to ask. If bd init
+    fails, this function exits the process; do not try to recover.
+    """
+    cmd = ["bd", "--actor", "bd-timew", "--dolt-auto-commit", "batch", "init"]
+    if server_mode:
+        cmd.append("--server")
+    if sandbox:
+        cmd.append("--sandbox")
+    if prefix:
+        cmd.extend(["--prefix", prefix])
+    if agents_profile:
+        cmd.extend(["--agents-profile", agents_profile])
+
+    root_log.info("Bootstrapping Beads: %s (cwd=%s)", " ".join(cmd), project_root)
+    result = run(cmd, cwd=project_root, check=False)
+    if result.returncode != 0:
+        sys.exit(
+            f"bd-timew init-project: `bd init` failed (exit {result.returncode}); "
+            "fix the failure and re-run, or pass --no-bootstrap to skip this step."
+        )
+
+
+def _ensure_auto_push_disabled(beads_dir: Path) -> None:
+    """Append `dolt.auto-push: false` to `.beads/config.yaml` if not already disabled.
+
+    Done BEFORE any `bd config set` invocation to prevent the auto-push hang
+    that fires on every bd write when `sync.remote` is set. See the
+    `pitfalls-beads-dolt-remote.md` "Three push mechanisms" entry for the
+    empirical verification.
+
+    Honors both flat (``dolt.auto-push: false``) and nested
+    (``dolt:`` / ``  auto-push: false``) forms — bd's runtime accepts either.
+    Writes nested form when starting clean, flat-key form when appending to
+    an existing config (avoids brittle YAML structural editing).
+    """
+    config_yaml = beads_dir / "config.yaml"
+    content = config_yaml.read_text() if config_yaml.exists() else ""
+
+    # Already disabled in either form? (Crude but the strings are
+    # unambiguous in this context — no other config key overlaps.)
+    if "auto-push: false" in content or "auto-push: \"false\"" in content:
+        return
+
+    if content.strip() == "":
+        new = "dolt:\n  auto-push: false\n"
+    else:
+        # Append flat-key form. bd's runtime resolves both; using the flat
+        # form here avoids parsing existing YAML structure and lets bd's
+        # `config show` precedence rules sort it out.
+        sep = "" if content.endswith("\n") else "\n"
+        new = content + f"{sep}dolt.auto-push: false\n"
+
+    config_yaml.write_text(new)
+    root_log.info("Wrote dolt.auto-push: false to %s (prevents init-project hang)", config_yaml)
 
 
 # ---------------------------------------------------------------------------
@@ -228,10 +308,35 @@ def cmd_init_project(
     dolt_user: str | None,
     pass_path: str | None,
     yes: bool,
+    bootstrap: bool = True,
+    sandbox: bool = True,
+    prefix: str | None = None,
+    agents_profile: str = "full",
 ) -> None:
+    # Bootstrap path (J121-xji): if .beads/ doesn't exist, run `bd init`
+    # ourselves. Forwards --server (when known), --sandbox (default true,
+    # safest setting from empirical testing), --prefix, and the chosen
+    # agents profile. Skip with --no-bootstrap to preserve the legacy
+    # "register-only" behavior for pre-existing .beads/ directories.
+    candidate_root = (path or Path.cwd()).resolve()
+    if bootstrap and not (candidate_root / ".beads").is_dir():
+        _bootstrap_bd_init(
+            candidate_root,
+            server_mode=server_mode,
+            sandbox=sandbox,
+            prefix=prefix,
+            agents_profile=agents_profile,
+        )
+
     beads_dir = find_beads_dir(path)
     project_root = beads_dir.parent.resolve()
     project_path = str(project_root)
+
+    # Pre-empt the auto-push hang (see pitfalls-beads-dolt-remote.md): write
+    # `dolt.auto-push: false` directly to .beads/config.yaml BEFORE any
+    # `bd config set` invocation. If we let `bd config set` run first, that
+    # very write triggers the auto-push and hangs.
+    _ensure_auto_push_disabled(beads_dir)
 
     config = load_repos_config()
     existing_entry = _get_repo_entry(config, project_path)
@@ -291,9 +396,12 @@ def cmd_init_project(
             prompt("Idle server stop threshold (hours, 0 to disable)", "4", yes=yes)
         )
 
+    # `dolt.auto-push: false` is set via direct file write earlier (see
+    # _ensure_auto_push_disabled) to break the chicken-and-egg hang; do not
+    # duplicate it here. Setting `no-push: true` would gate `bd dolt push`
+    # (the explicit subcommand), which we don't need to suppress.
     settings: list[tuple[str, str]] = [
         ("dolt.auto-commit", "batch"),
-        ("no-push", "true"),
     ]
     if no_git_ops:
         settings.append(("no-git-ops", "true"))

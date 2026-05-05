@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import subprocess
 from pathlib import Path
 
@@ -50,21 +51,76 @@ def _last_activity(project_path: str, project_dir: Path) -> dt.datetime | None:
     return max(candidates) if candidates else None
 
 
+def _discover_running_dolt_servers() -> list[tuple[int, Path]]:
+    """Return [(pid, project_root)] for every running `dolt sql-server` process.
+
+    Resolves each PID's working directory via `/proc/<pid>/cwd`. The project
+    root is the resolved cwd's `.beads/dolt`-parent — the conventional layout
+    is `<project>/.beads/dolt/` is the dolt server's cwd, so the project root
+    is two parents up.
+
+    Linux-only; on platforms without `/proc`, returns []. Falls through
+    silently rather than failing.
+    """
+    if not Path("/proc").is_dir():
+        return []
+    out: list[tuple[int, Path]] = []
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "dolt sql-server"],
+            check=False, capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return []
+    if result.returncode != 0:
+        return []
+    for line in result.stdout.splitlines():
+        try:
+            pid_str = line.split(maxsplit=1)[0]
+            pid = int(pid_str)
+        except (ValueError, IndexError):
+            continue
+        cwd_link = Path(f"/proc/{pid}/cwd")
+        try:
+            cwd = cwd_link.resolve(strict=True)
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+        # Conventional layout: <project>/.beads/dolt is the server cwd.
+        # Project root is two parents up.
+        if cwd.name == "dolt" and cwd.parent.name == ".beads":
+            out.append((pid, cwd.parent.parent))
+        else:
+            # Some installs (shared-server) put the server cwd elsewhere.
+            # Surface the cwd as-is so the user can see it.
+            out.append((pid, cwd))
+    return out
+
+
 def cmd_servers() -> None:
-    """List registered repos and their Dolt server status."""
+    """List registered repos and their Dolt server status, plus any running
+    but unregistered servers (J121-a3v two-pass discovery).
+
+    Pass 1 — registered repos from `~/.config/bd-timew/repos.yaml`: the
+    canonical view, with last-activity, configured server settings, etc.
+
+    Pass 2 — running `dolt sql-server` processes whose project root isn't
+    in repos.yaml: surface them as `[unregistered]` with a hint pointing
+    at `bd-timew init-project --path <path>`. This matters because
+    `bd init --server` doesn't register with bd-timew, so a project beads
+    workspace started outside bd-timew would otherwise be invisible here.
+    """
     from bd_timew.project import load_repos_config  # late import: avoid cycle
 
     config = load_repos_config()
     repos = config.get("repos", [])
-    if not repos:
-        from bd_timew.util import REPOS_CONFIG
-        root_log.info("No repos registered in %s", REPOS_CONFIG)
-        return
 
+    registered_paths: set[str] = set()
     for repo in repos:
         path = repo.get("path")
         if not path:
             continue
+        registered_paths.add(str(Path(path).resolve()))
+
         project_dir = Path(path)
         if not project_dir.is_dir():
             root_log.warning("%s  [directory not found]", path)
@@ -83,6 +139,22 @@ def cmd_servers() -> None:
         else:
             detail = result.stderr.strip() or result.stdout.strip()
             root_log.info("%s  [unknown: %s]", path, detail)
+
+    # Pass 2: scan running dolt servers and report any unregistered ones.
+    discovered = _discover_running_dolt_servers()
+    unregistered = [
+        (pid, root) for pid, root in discovered
+        if str(root.resolve()) not in registered_paths
+    ]
+    if unregistered:
+        for pid, root in unregistered:
+            root_log.info(
+                "%s  [unregistered, pid=%d] — register with: bd-timew init-project --path %s",
+                root, pid, root,
+            )
+    elif not repos:
+        from bd_timew.util import REPOS_CONFIG
+        root_log.info("No repos registered in %s and no running dolt servers found", REPOS_CONFIG)
 
 
 def cmd_server_stop(path: Path | None) -> None:

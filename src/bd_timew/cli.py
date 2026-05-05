@@ -42,6 +42,14 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
             "scope resolves from --scope flag → $BD_TIMEW_SCOPE → 'default'. "
             "The queue file lives at .beads/queue.yaml."
         ),
+        epilog=(
+            "All <action> subcommands accept these common options:\n"
+            "  --scope <name>      Queue scope (env: BD_TIMEW_SCOPE; default: 'default')\n"
+            "  --project-dir PATH  Project root containing .beads/ (default: active workspace)\n"
+            "  --titles, -t        Show bead titles alongside IDs (slower; one bd call per bead)\n"
+            "\n"
+            "Use `bd-timew queue <action> --help` for action-specific options."
+        ),
         formatter_class=HelpFormatter,
     )
     qsub = p_queue.add_subparsers(dest="queue_action", required=True,
@@ -276,6 +284,25 @@ def get_cli_arguments() -> argparse.Namespace:
     p_init.add_argument("--dolt-user", type=str, default=None)
     p_init.add_argument("--pass-path", type=str, default=None)
     p_init.add_argument("--yes", "-y", action="store_true")
+    p_init.add_argument(
+        "--bootstrap", action=argparse.BooleanOptionalAction, default=True,
+        help="Run `bd init` first if .beads/ is missing (default: enabled).",
+    )
+    p_init.add_argument(
+        "--sandbox", action=argparse.BooleanOptionalAction, default=True,
+        help="Forward --sandbox to bd init (default: enabled — disables auto-sync "
+             "during init, the empirically-safe setting).",
+    )
+    p_init.add_argument(
+        "--prefix", type=str, default=None,
+        help="Issue prefix for bd init (e.g. 'J121'). Forwarded only when bootstrapping.",
+    )
+    p_init.add_argument(
+        "--agents-profile", type=str, default="full",
+        choices=["minimal", "full"],
+        help="bd init --agents-profile value (default: full — full bd command reference "
+             "in the generated AGENTS.md).",
+    )
 
     # -- config init ---------------------------------------------------------
     p_config = sub.add_parser(
@@ -408,6 +435,8 @@ def main() -> None:
             check_interval=args.check_interval, idle_stop_hours=args.idle_stop_hours,
             server_mode=args.server, dolt_user=args.dolt_user,
             pass_path=args.pass_path, yes=args.yes,
+            bootstrap=args.bootstrap, sandbox=args.sandbox,
+            prefix=args.prefix, agents_profile=args.agents_profile,
         )
     elif args.cmd == "config":
         if args.config_action == "init":

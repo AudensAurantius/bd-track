@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from bd_timew.project import (
+    _ensure_auto_push_disabled,
     _get_repo_entry,
     _INTERVAL_ALIASES,
     load_repos_config,
@@ -111,3 +112,56 @@ def test_get_repo_entry_returns_none_when_absent():
 
 def test_get_repo_entry_handles_empty_repos():
     assert _get_repo_entry({"repos": []}, "/anything") is None
+
+
+# ---------------------------------------------------------------------------
+# _ensure_auto_push_disabled (J121-i85 / pitfalls-beads-dolt-remote)
+# ---------------------------------------------------------------------------
+
+def test_ensure_auto_push_disabled_creates_nested_when_empty(tmp_path):
+    beads = tmp_path / ".beads"
+    beads.mkdir()
+    _ensure_auto_push_disabled(beads)
+    assert (beads / "config.yaml").read_text() == "dolt:\n  auto-push: false\n"
+
+
+def test_ensure_auto_push_disabled_appends_flat_to_existing(tmp_path):
+    beads = tmp_path / ".beads"
+    beads.mkdir()
+    cfg = beads / "config.yaml"
+    cfg.write_text("sync:\n  remote: git+ssh://example/foo.git\n")
+    _ensure_auto_push_disabled(beads)
+    out = cfg.read_text()
+    # Existing content preserved
+    assert "sync:\n  remote: git+ssh://example/foo.git\n" in out
+    # New flat-key form appended
+    assert out.endswith("dolt.auto-push: false\n")
+
+
+def test_ensure_auto_push_disabled_idempotent_nested(tmp_path):
+    beads = tmp_path / ".beads"
+    beads.mkdir()
+    cfg = beads / "config.yaml"
+    cfg.write_text("dolt:\n  auto-push: false\n")
+    _ensure_auto_push_disabled(beads)
+    # No change — already has the value
+    assert cfg.read_text() == "dolt:\n  auto-push: false\n"
+
+
+def test_ensure_auto_push_disabled_idempotent_flat(tmp_path):
+    beads = tmp_path / ".beads"
+    beads.mkdir()
+    cfg = beads / "config.yaml"
+    cfg.write_text("dolt.auto-push: false\n")
+    _ensure_auto_push_disabled(beads)
+    assert cfg.read_text() == "dolt.auto-push: false\n"
+
+
+def test_ensure_auto_push_disabled_handles_missing_trailing_newline(tmp_path):
+    beads = tmp_path / ".beads"
+    beads.mkdir()
+    cfg = beads / "config.yaml"
+    cfg.write_text("sync:\n  remote: foo")  # no trailing newline
+    _ensure_auto_push_disabled(beads)
+    out = cfg.read_text()
+    assert "sync:\n  remote: foo\ndolt.auto-push: false\n" == out
