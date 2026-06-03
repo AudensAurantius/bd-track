@@ -25,21 +25,21 @@ from rich_argparse import RawDescriptionRichHelpFormatter
 # Constants
 # ---------------------------------------------------------------------------
 
-REPOS_CONFIG = Path.home() / ".config" / "bd-timew" / "repos.yaml"
-CLEANUP_STATE = Path.home() / ".cache" / "bd-timew" / "cleanup-state.json"
-CLEANUP_LOG = Path.home() / ".cache" / "bd-timew" / "cleanup.log"
-ACTIVITY_STATE = Path.home() / ".cache" / "bd-timew" / "activity-state.json"
+REPOS_CONFIG = Path.home() / ".config" / "bd-track" / "repos.yaml"
+CLEANUP_STATE = Path.home() / ".cache" / "bd-track" / "cleanup-state.json"
+CLEANUP_LOG = Path.home() / ".cache" / "bd-track" / "cleanup.log"
+ACTIVITY_STATE = Path.home() / ".cache" / "bd-track" / "activity-state.json"
 QUEUE_FILE = "queue.yaml"
 
-SYSTEMD_CLEANUP_NAME = "bd-timew-cleanup"
-SYSTEMD_IDLE_STOP_NAME = "bd-timew-idle-stop"
+SYSTEMD_CLEANUP_NAME = "bd-track-cleanup"
+SYSTEMD_IDLE_STOP_NAME = "bd-track-idle-stop"
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
-root_log = logging.getLogger("bd-timew")
-cleanup_log = logging.getLogger("bd-timew.cleanup")
+root_log = logging.getLogger("bd-track")
+cleanup_log = logging.getLogger("bd-track.cleanup")
 
 
 class HelpFormatter(
@@ -99,12 +99,12 @@ def find_beads_dir(project_dir: Path | None = None) -> Path:
     if project_dir is not None:
         candidate = project_dir / ".beads"
         if not candidate.is_dir():
-            sys.exit(f"bd-timew: no .beads/ directory found under {project_dir}")
+            sys.exit(f"bd-track: no .beads/ directory found under {project_dir}")
         return candidate
     result = run(["bd", "where"], check=False, capture=True)
     if result.returncode != 0:
         sys.exit(
-            "bd-timew: no active Beads workspace. cd into a project with "
+            "bd-track: no active Beads workspace. cd into a project with "
             ".beads/, or pass --project-dir."
         )
     return Path(result.stdout.strip().split("\n", 1)[0].strip())

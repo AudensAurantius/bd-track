@@ -7,7 +7,7 @@ than rendering as empty strings.
 Layout:
   systemd/  — systemd unit templates (.service, .timer)
   envrc/    — direnv .envrc fragments
-  sidecar/  — per-project .beads/bd-timew.yaml scaffold
+  sidecar/  — per-project .beads/bd-track.yaml scaffold
 """
 
 from importlib.resources import files
@@ -20,7 +20,7 @@ def render(path: str, **context: str) -> str:
 
     Args:
         path: Path relative to this package, e.g.
-            ``"systemd/bd-timew-cleanup.service.tmpl"``.
+            ``"systemd/bd-track-cleanup.service.tmpl"``.
         **context: Variables to interpolate. Unbound references raise.
 
     Returns:
@@ -29,7 +29,7 @@ def render(path: str, **context: str) -> str:
     Raises:
         ValueError: If the template references a variable not in `context`.
     """
-    raw = (files("bd_timew.templates") / path).read_text()
+    raw = (files("bd_track.templates") / path).read_text()
     try:
         return expand(raw, environ=context, nounset=True, surrounded_vars_only=True)
     except UnboundVariable as e:

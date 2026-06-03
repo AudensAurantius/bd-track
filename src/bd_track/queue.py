@@ -1,7 +1,7 @@
 """Scoped bead-execution queue subcommands.
 
 Maintains an ordered list of bead IDs per scope in ``.beads/queue.yaml``.
-Scope resolution: ``--scope`` flag → ``$BD_TIMEW_SCOPE`` env var → ``'default'``.
+Scope resolution: ``--scope`` flag → ``$BD_TRACK_SCOPE`` env var → ``'default'``.
 
 Schema (current, list-of-strings) — backward compatible:
 
@@ -24,8 +24,8 @@ from pathlib import Path
 
 import yaml
 
-from bd_timew.billing import get_issue
-from bd_timew.util import (
+from bd_track.billing import get_issue
+from bd_track.util import (
     QUEUE_FILE,
     confirm,
     find_beads_dir,
@@ -56,13 +56,13 @@ def _fetch_issue_safe(bead_id: str) -> dict | None:
 
 
 def resolve_scope(scope_arg: str | None) -> str:
-    """Resolve scope: ``--scope`` flag → ``$BD_TIMEW_SCOPE`` → ``'default'``.
+    """Resolve scope: ``--scope`` flag → ``$BD_TRACK_SCOPE`` → ``'default'``.
 
     Passes ``'all'`` through unchanged (only meaningful for ``clear``/``clean``).
     """
     if scope_arg is not None:
         return scope_arg
-    env_scope = os.environ.get("BD_TIMEW_SCOPE", "").strip()
+    env_scope = os.environ.get("BD_TRACK_SCOPE", "").strip()
     return env_scope if env_scope else "default"
 
 
@@ -106,7 +106,7 @@ def cmd_queue(
     their own ``cmd_*`` functions because their parameter shapes diverge.
     """
     beads_dir = find_beads_dir(project_dir)
-    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TIMEW_SCOPE", "").strip())
+    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TRACK_SCOPE", "").strip())
     scope = resolve_scope(scope_arg)
     all_queues = load_all_queues(beads_dir)
 
@@ -136,7 +136,7 @@ def cmd_queue(
 
     elif action == "push":
         if not ids:
-            sys.exit("bd-timew queue push: requires at least one <id>")
+            sys.exit("bd-track queue push: requires at least one <id>")
         queue = all_queues.get(scope, [])
         added = [i for i in ids if i not in queue]
         already = [i for i in ids if i in queue]
@@ -150,7 +150,7 @@ def cmd_queue(
 
     elif action == "unshift":
         if not ids or len(ids) != 1:
-            sys.exit("bd-timew queue unshift: requires exactly one <id>")
+            sys.exit("bd-track queue unshift: requires exactly one <id>")
         bead_id = ids[0]
         queue = all_queues.get(scope, [])
         if bead_id in queue:
@@ -187,7 +187,7 @@ def cmd_queue(
 
     elif action == "remove":
         if not ids:
-            sys.exit("bd-timew queue remove: requires at least one <id>")
+            sys.exit("bd-track queue remove: requires at least one <id>")
         queue = all_queues.get(scope, [])
         removed = []
         for bead_id in ids:
@@ -224,13 +224,13 @@ def cmd_clean(
     """Remove closed/deferred beads from one or all queue scopes.
 
     Default behaviour (no ``--scope`` and no env var): sweep every scope. This
-    is the form invoked by ``bd-timew stop`` after a stop completes. Pass an
+    is the form invoked by ``bd-track stop`` after a stop completes. Pass an
     explicit scope to limit the sweep.
 
     Returns the number of entries removed across all scopes.
     """
     beads_dir = find_beads_dir(project_dir)
-    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TIMEW_SCOPE", "").strip())
+    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TRACK_SCOPE", "").strip())
     all_queues = load_all_queues(beads_dir)
 
     if not all_queues:
@@ -301,7 +301,7 @@ def _bd_list(
     cwd = project_dir.parent if project_dir is not None else None
     result = run(cmd, check=False, capture=True, cwd=cwd)
     if result.returncode != 0:
-        sys.exit(f"bd-timew queue generate: `bd list` failed:\n{result.stderr}")
+        sys.exit(f"bd-track queue generate: `bd list` failed:\n{result.stderr}")
     data = json.loads(result.stdout) if result.stdout.strip() else []
     return data if isinstance(data, list) else []
 
@@ -362,7 +362,7 @@ def cmd_generate(
     if existing and not yes:
         if not is_interactive():
             sys.exit(
-                f"bd-timew queue generate: scope '{scope}' has {len(existing)} entries; "
+                f"bd-track queue generate: scope '{scope}' has {len(existing)} entries; "
                 "pass --yes to replace, or use --append."
             )
         if not confirm(
@@ -518,7 +518,7 @@ def cmd_prune(
     confirmation before any removals.
     """
     beads_dir = find_beads_dir(project_dir)
-    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TIMEW_SCOPE", "").strip())
+    explicit_scope = scope_arg is not None or bool(os.environ.get("BD_TRACK_SCOPE", "").strip())
     all_queues = load_all_queues(beads_dir)
 
     if not all_queues:

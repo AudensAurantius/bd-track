@@ -1,10 +1,10 @@
 [Unit]
-Description=bd-timew Beads cleanup (commit, compact, GC) for all registered projects
+Description=bd-track Beads cleanup (commit, compact, GC) for all registered projects
 After=network.target
 
 [Service]
 Type=oneshot
-ExecStart=${BD_TIMEW_PATH} run-service
+ExecStart=${BD_TRACK_PATH} run-service
 StandardOutput=journal
 StandardError=journal
 

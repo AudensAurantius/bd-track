@@ -1,6 +1,6 @@
 """Billing tuple resolution.
 
-Reads the per-project sidecar (``.beads/bd-timew.yaml``), fetches the active
+Reads the per-project sidecar (``.beads/bd-track.yaml``), fetches the active
 issue from ``bd``, and resolves a ``(client, case, svc)`` tuple via:
 
   1. Per-issue ``case:<string>`` label (escape hatch)
@@ -18,16 +18,16 @@ from pathlib import Path
 
 import yaml
 
-from bd_timew.util import root_log, run
+from bd_track.util import root_log, run
 
 
 def load_sidecar(beads_dir: Path) -> dict:
-    """Load ``.beads/bd-timew.yaml``; warn and return minimal defaults if absent."""
-    path = beads_dir / "bd-timew.yaml"
+    """Load ``.beads/bd-track.yaml``; warn and return minimal defaults if absent."""
+    path = beads_dir / "bd-track.yaml"
     if not path.exists():
         root_log.warning(
             "no sidecar at %s; using minimal defaults. "
-            "Run `bd-timew config init` to scaffold one.", path,
+            "Run `bd-track config init` to scaffold one.", path,
         )
         return {"default": {}, "patterns": []}
     with path.open() as f:
@@ -41,11 +41,11 @@ def get_issue(issue_id: str) -> dict:
     """Return the issue dict from ``bd show <id> --json``; exits on failure."""
     result = run(["bd", "show", issue_id, "--json"], check=False, capture=True)
     if result.returncode != 0:
-        sys.exit(f"bd-timew: `bd show {issue_id}` failed:\n{result.stderr}")
+        sys.exit(f"bd-track: `bd show {issue_id}` failed:\n{result.stderr}")
     data = json.loads(result.stdout)
     if isinstance(data, list):
         if not data:
-            sys.exit(f"bd-timew: issue {issue_id} not found")
+            sys.exit(f"bd-track: issue {issue_id} not found")
         return data[0]
     return data
 

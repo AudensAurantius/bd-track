@@ -13,15 +13,14 @@ from unittest.mock import patch
 
 import pytest
 
-from bd_timew.project import (
+from bd_track.project import (
+    _INTERVAL_ALIASES,
     _ensure_auto_push_disabled,
     _get_repo_entry,
-    _INTERVAL_ALIASES,
     load_repos_config,
     parse_cadence,
     save_repos_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_cadence
@@ -61,8 +60,8 @@ def test_interval_aliases_resolvable():
 def patched_config_path(tmp_path: Path):
     """Redirect REPOS_CONFIG to a tmp file for the duration of the test."""
     config_file = tmp_path / "repos.yaml"
-    with patch("bd_timew.project.REPOS_CONFIG", config_file), \
-         patch("bd_timew.util.REPOS_CONFIG", config_file):
+    with patch("bd_track.project.REPOS_CONFIG", config_file), \
+         patch("bd_track.util.REPOS_CONFIG", config_file):
         yield config_file
 
 

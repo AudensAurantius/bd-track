@@ -32,8 +32,8 @@ from pathlib import Path
 
 from ulid import ULID
 
-from bd_timew.session import project_id
-from bd_timew.util import find_beads_dir, root_log
+from bd_track.session import project_id
+from bd_track.util import find_beads_dir, root_log
 
 SCHEMA_VERSION = 1
 
@@ -48,7 +48,7 @@ PIPE_BUF = 4096
 # this XDG_DATA_HOME path is the server-mode / no-local-.beads fallback (NOT
 # ~/.cache — billing data is not disposable; and distinct from session.py's
 # ~/.local/state pointer, which is machine-local operational state).
-LOG_FALLBACK_DIR = Path.home() / ".local" / "share" / "bd-timew"
+LOG_FALLBACK_DIR = Path.home() / ".local" / "share" / "bd-track"
 
 VALID_EVENTS = ("start", "stop", "cancel", "correction")
 
@@ -70,8 +70,8 @@ def _safe_filename(name: str) -> str:
 def log_dir(project_dir: Path | None = None) -> Path:
     """Resolve the per-session log directory (bd-timew-tq9).
 
-    ``<beads_dir>/bd-timew/sessions/`` when a local beads dir exists (rides beads
-    sync); otherwise ``~/.local/share/bd-timew/<project-id>/sessions/``.
+    ``<beads_dir>/bd-track/sessions/`` when a local beads dir exists (rides beads
+    sync); otherwise ``~/.local/share/bd-track/<project-id>/sessions/``.
     """
     beads_dir: Path | None = None
     try:
@@ -79,7 +79,7 @@ def log_dir(project_dir: Path | None = None) -> Path:
     except SystemExit:
         beads_dir = None
     if beads_dir is not None and Path(beads_dir).is_dir():
-        return Path(beads_dir) / "bd-timew" / "sessions"
+        return Path(beads_dir) / "bd-track" / "sessions"
     root = Path(project_dir) if project_dir else Path.cwd()
     return LOG_FALLBACK_DIR / project_id(root) / "sessions"
 
@@ -93,7 +93,7 @@ def append_event(event: dict, *, session_id: str, project_dir: Path | None = Non
     data = (json.dumps(event, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
     if len(data) >= PIPE_BUF:
         root_log.warning(
-            "bd-timew event line is %d bytes (>= PIPE_BUF %d); append atomicity is "
+            "bd-track event line is %d bytes (>= PIPE_BUF %d); append atomicity is "
             "not guaranteed under concurrent same-file writers", len(data), PIPE_BUF,
         )
     path = _session_log_path(session_id, project_dir)
@@ -189,7 +189,7 @@ def resolve_provenance(
 ) -> dict:
     """Source provenance: explicit arg → env → (actor only) inference; else null."""
     return {
-        "group_id": group_id or os.environ.get("BD_TIMEW_GROUP_ID") or None,
-        "actor": actor or os.environ.get("BD_TIMEW_ACTOR") or _infer_actor(),
-        "role": role or os.environ.get("BD_TIMEW_ROLE") or None,
+        "group_id": group_id or os.environ.get("BD_TRACK_GROUP_ID") or None,
+        "actor": actor or os.environ.get("BD_TRACK_ACTOR") or _infer_actor(),
+        "role": role or os.environ.get("BD_TRACK_ROLE") or None,
     }

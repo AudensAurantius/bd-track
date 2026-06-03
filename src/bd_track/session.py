@@ -1,10 +1,10 @@
 """Session identity resolution for the JSONL timetracking backend (bd-timew-sfk).
 
-Resolves a session id for a ``bd-timew`` invocation, agent-agnostically, in
+Resolves a session id for a ``bd-track`` invocation, agent-agnostically, in
 this precedence order:
 
   1. an explicit ``--session-id``
-  2. ``$BD_TIMEW_SESSION_ID``      — coordinator / future claude-config plumbing
+  2. ``$BD_TRACK_SESSION_ID``      — coordinator / future claude-config plumbing
   3. ``$CLAUDE_CODE_SESSION_ID``   — auto-present in any Claude Code subprocess,
                                      so a live Claude session resolves correctly
                                      with no cooperation from the session itself
@@ -33,12 +33,12 @@ import json
 import os
 from pathlib import Path
 
-from bd_timew.util import find_beads_dir
+from bd_track.util import find_beads_dir
 
 # Operational state — XDG_STATE_HOME, not ~/.cache: the pointer is regenerable
 # but not throwaway mid-session. Never synced (see the operational/authoritative
 # split in docs/dev/timetracking-architecture.06022026.md).
-SESSION_STATE_DIR = Path.home() / ".local" / "state" / "bd-timew"
+SESSION_STATE_DIR = Path.home() / ".local" / "state" / "bd-track"
 POINTER_NAME = "current-session.json"
 
 # A pointer entry unused for longer than this is treated as a finished session;
@@ -47,7 +47,7 @@ POINTER_NAME = "current-session.json"
 POINTER_STALE_HOURS = 4
 _GEN_MAX_ATTEMPTS = 8
 
-ENV_SESSION = "BD_TIMEW_SESSION_ID"
+ENV_SESSION = "BD_TRACK_SESSION_ID"
 ENV_CLAUDE_SESSION = "CLAUDE_CODE_SESSION_ID"
 
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from bd_timew import events
+from bd_track import events
 
 SESSION = "blue.cat.tree"
 
@@ -24,7 +24,7 @@ def _read_lines(path: Path) -> list[dict]:
 
 @pytest.fixture
 def beads(monkeypatch, tmp_path):
-    """A fake local beads dir so log_dir() takes the <beads_dir>/bd-timew/sessions branch."""
+    """A fake local beads dir so log_dir() takes the <beads_dir>/bd-track/sessions branch."""
     bdir = tmp_path / "proj" / ".beads"
     bdir.mkdir(parents=True)
     monkeypatch.setattr(events, "find_beads_dir", lambda project_dir=None: bdir)
@@ -33,7 +33,7 @@ def beads(monkeypatch, tmp_path):
 
 @pytest.fixture
 def session_log(beads):
-    return beads / "bd-timew" / "sessions" / f"{SESSION}.jsonl"
+    return beads / "bd-track" / "sessions" / f"{SESSION}.jsonl"
 
 
 def _is_ulid(s: str) -> bool:
@@ -119,7 +119,7 @@ def test_correction_requires_a_change(beads):
 # ---------------------------------------------------------------------------
 
 def test_log_dir_uses_beads_dir_when_present(beads):
-    assert events.log_dir() == beads / "bd-timew" / "sessions"
+    assert events.log_dir() == beads / "bd-track" / "sessions"
 
 
 def test_log_dir_falls_back_when_no_beads_dir(monkeypatch, tmp_path):
@@ -139,9 +139,9 @@ def test_log_dir_falls_back_when_no_beads_dir(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_resolve_provenance_infers_actor(monkeypatch):
-    monkeypatch.delenv("BD_TIMEW_GROUP_ID", raising=False)
-    monkeypatch.delenv("BD_TIMEW_ACTOR", raising=False)
-    monkeypatch.delenv("BD_TIMEW_ROLE", raising=False)
+    monkeypatch.delenv("BD_TRACK_GROUP_ID", raising=False)
+    monkeypatch.delenv("BD_TRACK_ACTOR", raising=False)
+    monkeypatch.delenv("BD_TRACK_ROLE", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "uuid")
     assert events.resolve_provenance()["actor"] == "claude"
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
@@ -149,8 +149,8 @@ def test_resolve_provenance_infers_actor(monkeypatch):
 
 
 def test_resolve_provenance_precedence(monkeypatch):
-    monkeypatch.setenv("BD_TIMEW_ACTOR", "env-actor")
-    monkeypatch.setenv("BD_TIMEW_GROUP_ID", "env-group")
+    monkeypatch.setenv("BD_TRACK_ACTOR", "env-actor")
+    monkeypatch.setenv("BD_TRACK_GROUP_ID", "env-group")
     assert events.resolve_provenance(actor="explicit")["actor"] == "explicit"   # arg beats env
     assert events.resolve_provenance()["group_id"] == "env-group"               # env beats default
 

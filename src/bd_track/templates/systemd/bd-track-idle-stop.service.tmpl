@@ -1,0 +1,11 @@
+[Unit]
+Description=bd-track idle server stop — stop Dolt servers idle longer than threshold
+
+[Service]
+Type=oneshot
+ExecStart=${BD_TRACK_PATH} idle-stop --hours ${IDLE_STOP_HOURS}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

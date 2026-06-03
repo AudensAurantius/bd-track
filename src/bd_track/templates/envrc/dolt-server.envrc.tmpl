@@ -1,0 +1,4 @@
+# bd-track: beads dolt server — managed by bd-track init-project
+# Re-run bd-track init-project --server to update.
+bd dolt status &>/dev/null || bd dolt start
+export BEADS_DOLT_PASSWORD="$(pass show ${PASS_PATH} | head -1)"

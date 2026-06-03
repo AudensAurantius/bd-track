@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from bd_timew import session
+from bd_track import session
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_explicit_flag_wins(isolated, monkeypatch):
     assert session.resolve_session_id(PROJECT, explicit="explicit.id") == "explicit.id"
 
 
-def test_bd_timew_env_used(isolated, monkeypatch):
+def test_bd_track_env_used(isolated, monkeypatch):
     monkeypatch.setenv(session.ENV_SESSION, "from-env")
     assert session.resolve_session_id(PROJECT) == "from-env"
 
@@ -51,7 +51,7 @@ def test_claude_env_used(isolated, monkeypatch):
     assert session.resolve_session_id(PROJECT) == "claude-uuid"
 
 
-def test_bd_timew_env_beats_claude_env(isolated, monkeypatch):
+def test_bd_track_env_beats_claude_env(isolated, monkeypatch):
     monkeypatch.setenv(session.ENV_SESSION, "from-env")
     monkeypatch.setenv(session.ENV_CLAUDE_SESSION, "claude-uuid")
     assert session.resolve_session_id(PROJECT) == "from-env"

@@ -1,5 +1,5 @@
 [project]
-name = "bd-timew"
+name = "bd-track"
 version = "0.4.0"
 description = "Beads + Timewarrior bridge with project lifecycle management and scoped execution queues"
 readme = "README.md"
@@ -30,8 +30,14 @@ dependencies = [
 ]
 
 [project.scripts]
-bd-timew = "bd_timew.cli:main"
+bd-track = "bd_track.cli:main"
+# Deprecated alias — prints a stderr warning, then dispatches to the same CLI.
+# Keeps existing /start /stop wrappers + .envrc-driven callers working through
+# the bd-timew → bd-track transition. Remove in a later release.
+bd-timew = "bd_track.cli:main_deprecated"
 
+# NOTE: the GitHub repo is still named 'bd-timew'; these URLs track the real
+# remote. Update if/when the repo is renamed to bd-track.
 [project.urls]
 Homepage = "https://github.com/AudensAurantius/bd-timew"
 Repository = "https://github.com/AudensAurantius/bd-timew"
@@ -49,7 +55,7 @@ requires = ["uv_build>=0.7"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "bd_timew"
+module-name = "bd_track"
 module-root = "src"
 
 [tool.ruff]

@@ -1,27 +1,30 @@
 #!/usr/bin/env sh
-# bd-timew installer — fetches system deps and installs the tool via pipx.
+# bd-track installer — fetches system deps and installs the tool via pipx.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/AudensAurantius/bd-timew/main/install.sh | sh
 #
 # Or for a specific version:
-#   curl -fsSL https://raw.githubusercontent.com/AudensAurantius/bd-timew/main/install.sh | sh -s -- v0.1.0
+#   curl -fsSL https://raw.githubusercontent.com/AudensAurantius/bd-timew/main/install.sh | sh -s -- v0.5.0
 #
 # Environment:
-#   BD_TIMEW_REF    Git ref to install (default: main)
-#   BD_TIMEW_REPO   Repo URL (default: https://github.com/AudensAurantius/bd-timew.git)
+#   BD_TRACK_REF    Git ref to install (default: main)
+#   BD_TRACK_REPO   Repo URL (default: https://github.com/AudensAurantius/bd-timew.git)
+#
+# NOTE: the GitHub repo is still named 'bd-timew'; the installed package +
+# executable are 'bd-track'. Update these URLs if the repo is later renamed.
 
 set -eu
 
-REF="${1:-${BD_TIMEW_REF:-main}}"
-REPO="${BD_TIMEW_REPO:-https://github.com/AudensAurantius/bd-timew.git}"
+REF="${1:-${BD_TRACK_REF:-main}}"
+REPO="${BD_TRACK_REPO:-https://github.com/AudensAurantius/bd-timew.git}"
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-log()  { printf '\033[1;34m[bd-timew install]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[bd-timew install]\033[0m %s\n' "$*" >&2; }
-fail() { printf '\033[1;31m[bd-timew install]\033[0m %s\n' "$*" >&2; exit 1; }
+log()  { printf '\033[1;34m[bd-track install]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[bd-track install]\033[0m %s\n' "$*" >&2; }
+fail() { printf '\033[1;31m[bd-track install]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Detect package manager
@@ -57,21 +60,8 @@ install_pkg() {
     esac
 }
 
-# ---------------------------------------------------------------------------
-# Ensure timew is installed
-# ---------------------------------------------------------------------------
-if command -v timew >/dev/null 2>&1; then
-    log "timew already installed: $(timew --version 2>/dev/null | head -1)"
-else
-    log "Installing timew (Timewarrior)..."
-    case "$PKG_MGR" in
-        brew)   install_pkg timewarrior ;;
-        apt)    install_pkg timewarrior ;;
-        dnf)    install_pkg timew ;;
-        pacman) install_pkg timew ;;
-        *)      fail "Cannot auto-install timew. See https://timewarrior.net/docs/install/" ;;
-    esac
-fi
+# Timewarrior is no longer a dependency — bd-track uses an append-only JSONL
+# event log, not the timew backend. (Removed in the 0.5.0 rewrite.)
 
 # ---------------------------------------------------------------------------
 # Ensure pipx is installed
@@ -102,22 +92,22 @@ else
     else
         warn "bd (beads) not found and cargo unavailable for auto-install."
         warn "Install it from https://github.com/steveyegge/beads or via 'cargo install beads' after installing Rust."
-        warn "Continuing — bd-timew will be installed but won't function until bd is on PATH."
+        warn "Continuing — bd-track will be installed but won't function until bd is on PATH."
     fi
 fi
 
 # ---------------------------------------------------------------------------
-# Install bd-timew via pipx
+# Install bd-track via pipx
 # ---------------------------------------------------------------------------
-log "Installing bd-timew from $REPO@$REF..."
+log "Installing bd-track from $REPO@$REF..."
 pipx install --force "git+$REPO@$REF"
 
 # ---------------------------------------------------------------------------
 # Verify
 # ---------------------------------------------------------------------------
-if command -v bd-timew >/dev/null 2>&1; then
-    log "Installed: $(bd-timew --help 2>&1 | head -1 || echo 'bd-timew')"
-    log "Run 'bd-timew config init' inside a project with .beads/ to scaffold a sidecar."
+if command -v bd-track >/dev/null 2>&1; then
+    log "Installed: $(bd-track --help 2>&1 | head -1 || echo 'bd-track')"
+    log "Run 'bd-track config init' inside a project with .beads/ to scaffold a sidecar."
 else
-    warn "bd-timew installed but not on PATH. You may need to restart your shell or run 'pipx ensurepath'."
+    warn "bd-track installed but not on PATH. You may need to restart your shell or run 'pipx ensurepath'."
 fi

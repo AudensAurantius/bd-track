@@ -26,8 +26,8 @@ from pathlib import Path
 
 import yaml
 
-from bd_timew.templates import render
-from bd_timew.util import (
+from bd_track.templates import render
+from bd_track.util import (
     CLEANUP_STATE,
     REPOS_CONFIG,
     SYSTEMD_CLEANUP_NAME,
@@ -35,13 +35,12 @@ from bd_timew.util import (
     cleanup_log,
     confirm,
     find_beads_dir,
-    is_interactive,
     prompt,
     root_log,
     run,
 )
 
-_ENVRC_MARKER = "# bd-timew: beads dolt server"
+_ENVRC_MARKER = "# bd-track: beads dolt server"
 
 _INTERVAL_ALIASES: dict[str, str] = {
     "daily": "1d",
@@ -61,7 +60,7 @@ def _bootstrap_bd_init(
     """Run `bd init` in `project_root` when `.beads/` is missing (J121-xji).
 
     Forwards the recommended flags from the empirically-verified hang-safe
-    init flow: ``--actor bd-timew --dolt-auto-commit batch [--server]
+    init flow: ``--actor bd-track --dolt-auto-commit batch [--server]
     [--sandbox] [--prefix ...] [--agents-profile full]``.
 
     ``--non-interactive`` is intentionally NOT forwarded — bd 1.0.x has been
@@ -69,7 +68,7 @@ def _bootstrap_bd_init(
     must supply enough flags that bd init has no prompts to ask. If bd init
     fails, this function exits the process; do not try to recover.
     """
-    cmd = ["bd", "--actor", "bd-timew", "--dolt-auto-commit", "batch", "init"]
+    cmd = ["bd", "--actor", "bd-track", "--dolt-auto-commit", "batch", "init"]
     if server_mode:
         cmd.append("--server")
     if sandbox:
@@ -83,7 +82,7 @@ def _bootstrap_bd_init(
     result = run(cmd, cwd=project_root, check=False)
     if result.returncode != 0:
         sys.exit(
-            f"bd-timew init-project: `bd init` failed (exit {result.returncode}); "
+            f"bd-track init-project: `bd init` failed (exit {result.returncode}); "
             "fix the failure and re-run, or pass --no-bootstrap to skip this step."
         )
 
@@ -169,7 +168,7 @@ def parse_cadence(cadence_str: str) -> dt.timedelta:
     """Parse a cadence like '1d', '12h', '30m' into a timedelta."""
     m = re.fullmatch(r"(\d+)([dhm])", cadence_str.strip())
     if not m:
-        sys.exit(f"bd-timew: invalid cadence '{cadence_str}' — use e.g. 1d, 7d, 12h")
+        sys.exit(f"bd-track: invalid cadence '{cadence_str}' — use e.g. 1d, 7d, 12h")
     value, unit = int(m.group(1)), m.group(2)
     return {"d": dt.timedelta(days=value), "h": dt.timedelta(hours=value),
             "m": dt.timedelta(minutes=value)}[unit]
@@ -511,7 +510,7 @@ def _install_systemd_units(
     """Install the cleanup + idle-stop systemd user units (idempotent)."""
     systemd_dir = Path.home() / ".config" / "systemd" / "user"
     systemd_dir.mkdir(parents=True, exist_ok=True)
-    bd_timew_path = shutil.which("bd-timew") or sys.argv[0]
+    bd_track_path = shutil.which("bd-track") or sys.argv[0]
 
     def _write_unit(path: Path, content: str, label: str) -> None:
         if not path.exists():
@@ -524,14 +523,14 @@ def _install_systemd_units(
     cleanup_timer = systemd_dir / f"{SYSTEMD_CLEANUP_NAME}.timer"
     _write_unit(
         cleanup_service,
-        render("systemd/bd-timew-cleanup.service.tmpl", BD_TIMEW_PATH=bd_timew_path),
+        render("systemd/bd-track-cleanup.service.tmpl", BD_TRACK_PATH=bd_track_path),
         "Cleanup service",
     )
     if not cleanup_timer.exists():
         config["global"]["check_interval"] = check_interval
         save_repos_config(config)
         cleanup_timer.write_text(render(
-            "systemd/bd-timew-cleanup.timer.tmpl",
+            "systemd/bd-track-cleanup.timer.tmpl",
             CHECK_INTERVAL=check_interval,
             SERVICE_NAME=SYSTEMD_CLEANUP_NAME,
         ))
@@ -545,15 +544,15 @@ def _install_systemd_units(
         _write_unit(
             idle_service,
             render(
-                "systemd/bd-timew-idle-stop.service.tmpl",
-                BD_TIMEW_PATH=bd_timew_path,
+                "systemd/bd-track-idle-stop.service.tmpl",
+                BD_TRACK_PATH=bd_track_path,
                 IDLE_STOP_HOURS=str(idle_stop_hours),
             ),
             "Idle-stop service",
         )
         _write_unit(
             idle_timer,
-            render("systemd/bd-timew-idle-stop.timer.tmpl", SERVICE_NAME=SYSTEMD_IDLE_STOP_NAME),
+            render("systemd/bd-track-idle-stop.timer.tmpl", SERVICE_NAME=SYSTEMD_IDLE_STOP_NAME),
             "Idle-stop timer",
         )
 
@@ -681,14 +680,14 @@ def cmd_run_service() -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_config_init(project_dir: Path | None = None) -> None:
-    """Scaffold a per-project .beads/bd-timew.yaml from the packaged template.
+    """Scaffold a per-project .beads/bd-track.yaml from the packaged template.
 
     Refuses to overwrite an existing sidecar.
     """
     beads_dir = find_beads_dir(project_dir)
-    sidecar = beads_dir / "bd-timew.yaml"
+    sidecar = beads_dir / "bd-track.yaml"
     if sidecar.exists():
-        sys.exit(f"bd-timew config init: refusing to overwrite existing {sidecar}")
-    sidecar.write_text(render("sidecar/bd-timew.yaml.tmpl"))
+        sys.exit(f"bd-track config init: refusing to overwrite existing {sidecar}")
+    sidecar.write_text(render("sidecar/bd-track.yaml.tmpl"))
     root_log.info("Created %s", sidecar)
     root_log.info("Edit it to map your bead labels to billing tuple values.")

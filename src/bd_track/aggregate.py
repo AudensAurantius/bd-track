@@ -26,8 +26,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bd_timew.events import log_dir
-from bd_timew.util import root_log
+from bd_track.events import log_dir
+from bd_track.util import root_log
 
 # Policy axes available for partition/collapse. Output-grouping dimensions
 # (bead, session, or a tag key like "client") are a separate concern (see report).

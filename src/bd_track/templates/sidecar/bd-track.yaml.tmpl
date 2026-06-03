@@ -1,11 +1,11 @@
-# bd-timew per-project sidecar — maps Beads issue labels to a billing tuple.
+# bd-track per-project sidecar — maps Beads issue labels to a billing tuple.
 #
 # Resolution order (first match wins):
 #   1. Per-issue `case:<string>` label on the bead (escape hatch)
 #   2. First matching pattern in `patterns:` below (regex on space-joined labels)
 #   3. The `default:` block below
 #
-# Run `bd-timew resolve <bead-id>` to dry-run resolution for any bead.
+# Run `bd-track resolve <bead-id>` to dry-run resolution for any bead.
 
 default:
   client: ""        # default client when no pattern matches; leave blank for "(none)"

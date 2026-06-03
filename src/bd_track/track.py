@@ -16,17 +16,17 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from bd_timew.aggregate import (
+from bd_track.aggregate import (
     POLICIES,
     Interval,
     load_intervals,
     open_intervals,
     report,
 )
-from bd_timew.billing import get_issue, load_sidecar, resolve_tuple
-from bd_timew.events import log_dir, resolve_provenance, start_interval, stop_interval
-from bd_timew.session import resolve_session_id
-from bd_timew.util import find_beads_dir, record_activity, root_log
+from bd_track.billing import get_issue, load_sidecar, resolve_tuple
+from bd_track.events import log_dir, resolve_provenance, start_interval, stop_interval
+from bd_track.session import resolve_session_id
+from bd_track.util import find_beads_dir, record_activity, root_log
 
 # Billing-tuple fields surfaced in start/status/active output. The *shape* is
 # sidecar-defined (bd-timew-qny); these are the BOCO-NetSuite defaults the
@@ -123,7 +123,7 @@ def cmd_start(issue_id: str, *, dry_run: bool = False, session_id: str | None = 
     root_log.info("Started interval %s  [session %s]", interval[:8], sid)
 
     if issue.get("status") != "in_progress":
-        from bd_timew.util import run
+        from bd_track.util import run
         run(["bd", "update", issue_id, "--claim"], check=False)
 
     record_activity(str(project_root.resolve()))
@@ -154,7 +154,7 @@ def cmd_stop(issue_id: str | None = None, *, clean: bool = True,
                       iv.interval[:8], _elapsed(iv.start))
 
     if clean:
-        from bd_timew.queue import cmd_clean
+        from bd_track.queue import cmd_clean
         try:
             cmd_clean(quiet=True)
         except SystemExit:

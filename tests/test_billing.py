@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from bd_timew.billing import load_sidecar, resolve_tuple
+from bd_track.billing import load_sidecar, resolve_tuple
 
 
 @pytest.fixture
 def sidecar_file(tmp_path: Path) -> Path:
-    """A .beads/ dir; the test writes bd-timew.yaml into it."""
+    """A .beads/ dir; the test writes bd-track.yaml into it."""
     d = tmp_path / ".beads"
     d.mkdir()
     return d
@@ -27,14 +27,14 @@ def test_load_sidecar_missing_returns_minimal_defaults(sidecar_file):
 
 
 def test_load_sidecar_supplies_missing_keys(sidecar_file):
-    (sidecar_file / "bd-timew.yaml").write_text("default: {client: foo}\n")
+    (sidecar_file / "bd-track.yaml").write_text("default: {client: foo}\n")
     data = load_sidecar(sidecar_file)
     assert data["default"] == {"client": "foo"}
     assert data["patterns"] == []
 
 
 def test_load_sidecar_full_round_trip(sidecar_file):
-    (sidecar_file / "bd-timew.yaml").write_text(
+    (sidecar_file / "bd-track.yaml").write_text(
         "default:\n  client: c\n  case: ca\n  svc: s\n"
         "patterns:\n  - match: 'foo'\n    client: alt\n"
     )

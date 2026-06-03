@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import datetime as dt
-import os
 import subprocess
 from pathlib import Path
 
-from bd_timew.util import load_activity_state, root_log
+from bd_track.util import load_activity_state, root_log
 
 
 def _bd_dolt_in(project_dir: Path, *args: str) -> subprocess.CompletedProcess:
@@ -32,7 +31,7 @@ def _last_activity(project_path: str, project_dir: Path) -> dt.datetime | None:
     """Return the most recent activity timestamp from all available signals."""
     candidates: list[dt.datetime] = []
 
-    # Signal 1: bd-timew start/stop events
+    # Signal 1: bd-track start/stop events
     state = load_activity_state()
     ts_str = state.get(project_path)
     if ts_str:
@@ -100,16 +99,16 @@ def cmd_servers() -> None:
     """List registered repos and their Dolt server status, plus any running
     but unregistered servers (J121-a3v two-pass discovery).
 
-    Pass 1 — registered repos from `~/.config/bd-timew/repos.yaml`: the
+    Pass 1 — registered repos from `~/.config/bd-track/repos.yaml`: the
     canonical view, with last-activity, configured server settings, etc.
 
     Pass 2 — running `dolt sql-server` processes whose project root isn't
     in repos.yaml: surface them as `[unregistered]` with a hint pointing
-    at `bd-timew init-project --path <path>`. This matters because
-    `bd init --server` doesn't register with bd-timew, so a project beads
-    workspace started outside bd-timew would otherwise be invisible here.
+    at `bd-track init-project --path <path>`. This matters because
+    `bd init --server` doesn't register with bd-track, so a project beads
+    workspace started outside bd-track would otherwise be invisible here.
     """
-    from bd_timew.project import load_repos_config  # late import: avoid cycle
+    from bd_track.project import load_repos_config  # late import: avoid cycle
 
     config = load_repos_config()
     repos = config.get("repos", [])
@@ -149,17 +148,17 @@ def cmd_servers() -> None:
     if unregistered:
         for pid, root in unregistered:
             root_log.info(
-                "%s  [unregistered, pid=%d] — register with: bd-timew init-project --path %s",
+                "%s  [unregistered, pid=%d] — register with: bd-track init-project --path %s",
                 root, pid, root,
             )
     elif not repos:
-        from bd_timew.util import REPOS_CONFIG
+        from bd_track.util import REPOS_CONFIG
         root_log.info("No repos registered in %s and no running dolt servers found", REPOS_CONFIG)
 
 
 def cmd_server_stop(path: Path | None) -> None:
     """Stop Dolt servers for one or all registered repos."""
-    from bd_timew.project import load_repos_config
+    from bd_track.project import load_repos_config
 
     config = load_repos_config()
     repos = config.get("repos", [])
@@ -197,7 +196,7 @@ def cmd_server_stop(path: Path | None) -> None:
 
 def cmd_idle_stop(hours: float) -> None:
     """Stop Dolt servers idle longer than the threshold; ``hours=0`` reports only."""
-    from bd_timew.project import load_repos_config
+    from bd_track.project import load_repos_config
 
     config = load_repos_config()
     now = dt.datetime.now(dt.timezone.utc)

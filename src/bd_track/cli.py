@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from bd_timew.util import HelpFormatter, setup_logger
+from bd_track.util import HelpFormatter, setup_logger
 
 # Mirrors aggregate.POLICIES keys; duplicated here so argparse choices don't
 # force an eager import of the aggregator at CLI-startup time.
 _REPORT_POLICIES = ("billing", "machine", "wallclock")
 
 __doc_summary__ = """\
-bd-timew: Beads + Timewarrior bridge with project lifecycle management.
+bd-track: Beads time-tracking with project lifecycle management.
 
 Resolves a Beads issue's labels to an external billing tuple
-(client, case, svc) via a per-project sidecar (.beads/bd-timew.yaml),
-then starts or stops a Timewarrior interval tagged accordingly.
+(client, case, svc) via a per-project sidecar (.beads/bd-track.yaml),
+then appends start/stop events to a per-session, append-only JSONL log,
+tagged accordingly. Concurrent sessions are safe — there is no single
+global active interval to clobber (the timew backend's failure mode).
 
 Also provides project maintenance commands (cleanup, init-project,
 config init), Dolt server management, and named bead-execution queues.
@@ -34,7 +37,7 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
 
     All queue operations are subcommands of ``queue`` (push, unshift, pop,
     peek, list, remove, clear, clean, generate, prune). The flat top-level
-    forms (``bd-timew push``, etc.) were removed in favor of this shape so
+    forms (``bd-track push``, etc.) were removed in favor of this shape so
     the analytical commands (``clean``, ``generate``, ``prune``) live next to
     the mechanical ones rather than scattered at the top level.
     """
@@ -43,16 +46,16 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
         help="Bead-execution queue operations (push, pop, list, clean, generate, prune, ...).",
         description=(
             "Maintain ordered, scoped queues of beads to work through. Default "
-            "scope resolves from --scope flag → $BD_TIMEW_SCOPE → 'default'. "
+            "scope resolves from --scope flag → $BD_TRACK_SCOPE → 'default'. "
             "The queue file lives at .beads/queue.yaml."
         ),
         epilog=(
             "All <action> subcommands accept these common options:\n"
-            "  --scope <name>      Queue scope (env: BD_TIMEW_SCOPE; default: 'default')\n"
+            "  --scope <name>      Queue scope (env: BD_TRACK_SCOPE; default: 'default')\n"
             "  --project-dir PATH  Project root containing .beads/ (default: active workspace)\n"
             "  --titles, -t        Show bead titles alongside IDs (slower; one bd call per bead)\n"
             "\n"
-            "Use `bd-timew queue <action> --help` for action-specific options."
+            "Use `bd-track queue <action> --help` for action-specific options."
         ),
         formatter_class=HelpFormatter,
     )
@@ -63,7 +66,7 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "--scope", metavar="<scope>", default=None,
-        help="Queue scope name. Resolved: --scope flag → $BD_TIMEW_SCOPE → 'default'.",
+        help="Queue scope name. Resolved: --scope flag → $BD_TRACK_SCOPE → 'default'.",
     )
     common.add_argument(
         "--project-dir", type=Path, default=None,
@@ -111,7 +114,7 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
         description=(
             "Mechanical sweep: queries bd for the status of every queue entry "
             "and drops anything closed or deferred. With no --scope, sweeps all "
-            "scopes. Also invoked automatically after `bd-timew stop`."
+            "scopes. Also invoked automatically after `bd-track stop`."
         ),
         formatter_class=HelpFormatter,
     )
@@ -178,7 +181,7 @@ def _add_queue_parsers(sub: argparse._SubParsersAction) -> None:
 
 def get_cli_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="bd-timew",
+        prog="bd-track",
         description=__doc_summary__,
         formatter_class=HelpFormatter,
     )
@@ -190,7 +193,7 @@ def get_cli_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--session-id", metavar="<id>", default=None,
-        help="Explicit session id (overrides $BD_TIMEW_SESSION_ID, "
+        help="Explicit session id (overrides $BD_TRACK_SESSION_ID, "
              "$CLAUDE_CODE_SESSION_ID, and the current-session pointer).",
     )
 
@@ -202,10 +205,12 @@ def get_cli_arguments() -> argparse.Namespace:
     # -- start ---------------------------------------------------------------
     p_start = sub.add_parser(
         "start",
-        help="Claim a Beads issue and start a Timewarrior interval.",
+        help="Claim a Beads issue and start a tracking interval.",
         description=(
             "Resolves the billing tuple for <issue-id>, claims it in Beads "
-            "(if not already in_progress), and starts a tagged Timewarrior interval."
+            "(if not already in_progress), and appends a tagged start event. "
+            "Ends this session's own open interval first (single-active-per-"
+            "session) but never touches another session's interval."
         ),
         formatter_class=HelpFormatter,
     )
@@ -214,14 +219,14 @@ def get_cli_arguments() -> argparse.Namespace:
     # -- stop ----------------------------------------------------------------
     p_stop = sub.add_parser(
         "stop",
-        help="Stop the current Timewarrior interval.",
+        help="Stop this session's open interval(s).",
         description=(
-            "Stops the Timewarrior interval tagged with <issue-id> if given, "
-            "otherwise stops all active intervals ('timew stop' with no args). "
-            "Passing the issue ID explicitly is strongly recommended when multiple "
-            "sessions may be tracking different beads concurrently. After stopping, "
-            "runs `queue clean` automatically to drop any newly-closed beads from "
-            "queue scopes; pass --no-clean to skip."
+            "Appends a stop event for this session's open interval(s); with "
+            "<issue-id>, only the interval tagged with that bead. Unlike the old "
+            "timew backend, a no-argument stop can never reach another session's "
+            "interval — it only closes ULIDs in the caller's own session log. "
+            "After stopping, runs `queue clean` automatically to drop any newly-"
+            "closed beads from queue scopes; pass --no-clean to skip."
         ),
         formatter_class=HelpFormatter,
     )
@@ -305,7 +310,7 @@ def get_cli_arguments() -> argparse.Namespace:
         help="Inspect session identity (currently: 'session current' only).",
         description=(
             "Session identity for the JSONL timetracking backend. Resolution "
-            "precedence: --session-id → $BD_TIMEW_SESSION_ID → "
+            "precedence: --session-id → $BD_TRACK_SESSION_ID → "
             "$CLAUDE_CODE_SESSION_ID → current-session pointer → generated id."
         ),
         formatter_class=HelpFormatter,
@@ -376,13 +381,13 @@ def get_cli_arguments() -> argparse.Namespace:
     # -- config init ---------------------------------------------------------
     p_config = sub.add_parser(
         "config",
-        help="Manage bd-timew configuration (currently: 'config init' only).",
+        help="Manage bd-track configuration (currently: 'config init' only).",
         formatter_class=HelpFormatter,
     )
     p_config_sub = p_config.add_subparsers(dest="config_action", required=True)
     p_config_init = p_config_sub.add_parser(
         "init",
-        help="Scaffold a per-project .beads/bd-timew.yaml from the packaged template.",
+        help="Scaffold a per-project .beads/bd-track.yaml from the packaged template.",
         formatter_class=HelpFormatter,
     )
     p_config_init.add_argument(
@@ -417,11 +422,11 @@ def get_cli_arguments() -> argparse.Namespace:
 
 
 def _dispatch_queue(args: argparse.Namespace) -> None:
-    """Route ``bd-timew queue <action>`` to the right queue.py function."""
+    """Route ``bd-track queue <action>`` to the right queue.py function."""
     action = args.queue_action
 
     if action in ("push", "unshift", "pop", "peek", "list", "remove", "clear"):
-        from bd_timew.queue import cmd_queue
+        from bd_track.queue import cmd_queue
         if action == "push":
             ids = args.ids
         elif action == "unshift":
@@ -437,12 +442,12 @@ def _dispatch_queue(args: argparse.Namespace) -> None:
         return
 
     if action == "clean":
-        from bd_timew.queue import cmd_clean
+        from bd_track.queue import cmd_clean
         cmd_clean(scope_arg=args.scope, project_dir=args.project_dir)
         return
 
     if action == "generate":
-        from bd_timew.queue import cmd_generate
+        from bd_track.queue import cmd_generate
         statuses = [s.strip() for s in args.status.split(",") if s.strip()]
         cmd_generate(
             scope_arg=args.scope,
@@ -458,13 +463,28 @@ def _dispatch_queue(args: argparse.Namespace) -> None:
         return
 
     if action == "prune":
-        from bd_timew.queue import cmd_prune
+        from bd_track.queue import cmd_prune
         cmd_prune(
             scope_arg=args.scope,
             project_dir=args.project_dir,
             yes=args.yes,
         )
         return
+
+
+def main_deprecated() -> None:
+    """Entrypoint for the deprecated ``bd-timew`` alias: warn, then dispatch.
+
+    The package + executable were renamed to ``bd-track`` (the timew backend is
+    gone). This alias keeps existing callers working through the transition.
+    """
+    print(
+        "warning: `bd-timew` is deprecated and will be removed in a future "
+        "release; use `bd-track` instead. Run `bd-track migrate rename` to "
+        "migrate config/env naming.",
+        file=sys.stderr,
+    )
+    main()
 
 
 def main() -> None:
@@ -478,37 +498,37 @@ def main() -> None:
     # Late imports keep CLI startup snappy and avoid loading heavyweight modules
     # for unrelated subcommands.
     if args.cmd == "start":
-        from bd_timew.timew import cmd_start
+        from bd_track.track import cmd_start
         cmd_start(args.issue_id, session_id=args.session_id)
     elif args.cmd == "stop":
-        from bd_timew.timew import cmd_stop
+        from bd_track.track import cmd_stop
         cmd_stop(args.issue_id, clean=args.clean, session_id=args.session_id)
     elif args.cmd == "switch":
-        from bd_timew.timew import cmd_switch
+        from bd_track.track import cmd_switch
         cmd_switch(args.issue_id, from_issue_id=args.from_issue_id,
                    session_id=args.session_id)
     elif args.cmd == "status":
-        from bd_timew.timew import cmd_status
+        from bd_track.track import cmd_status
         cmd_status(session_id=args.session_id)
     elif args.cmd == "active":
-        from bd_timew.timew import cmd_active
+        from bd_track.track import cmd_active
         cmd_active(session_id=args.session_id)
     elif args.cmd == "report":
-        from bd_timew.timew import cmd_report
+        from bd_track.track import cmd_report
         cmd_report(group_by=args.group_by, policy_name=args.policy_name,
                    since=args.since, until=args.until, session_id=args.session_id)
     elif args.cmd == "resolve":
-        from bd_timew.timew import cmd_start
+        from bd_track.track import cmd_start
         cmd_start(args.issue_id, dry_run=True, session_id=args.session_id)
     elif args.cmd == "session":
         if args.session_action == "current":
-            from bd_timew.session import cmd_session_current
+            from bd_track.session import cmd_session_current
             cmd_session_current(project_dir=args.project_dir, explicit=args.session_id)
     elif args.cmd == "cleanup":
-        from bd_timew.project import cmd_cleanup
+        from bd_track.project import cmd_cleanup
         cmd_cleanup(args.days, commit=args.commit, project_dir=args.project_dir)
     elif args.cmd == "init-project":
-        from bd_timew.project import cmd_init_project
+        from bd_track.project import cmd_init_project
         cmd_init_project(
             path=args.path, days=args.days, commit_cadence=args.commit_cadence,
             statuses_arg=args.statuses, hooks_arg=args.hooks,
@@ -521,19 +541,19 @@ def main() -> None:
         )
     elif args.cmd == "config":
         if args.config_action == "init":
-            from bd_timew.project import cmd_config_init
+            from bd_track.project import cmd_config_init
             cmd_config_init(project_dir=args.project_dir)
     elif args.cmd == "idle-stop":
-        from bd_timew.server import cmd_idle_stop
+        from bd_track.server import cmd_idle_stop
         cmd_idle_stop(args.hours)
     elif args.cmd == "run-service":
-        from bd_timew.project import cmd_run_service
+        from bd_track.project import cmd_run_service
         cmd_run_service()
     elif args.cmd == "servers":
-        from bd_timew.server import cmd_servers
+        from bd_track.server import cmd_servers
         cmd_servers()
     elif args.cmd == "server-stop":
-        from bd_timew.server import cmd_server_stop
+        from bd_track.server import cmd_server_stop
         cmd_server_stop(args.path)
     elif args.cmd == "queue":
         _dispatch_queue(args)
