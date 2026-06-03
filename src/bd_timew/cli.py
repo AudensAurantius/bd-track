@@ -7,6 +7,10 @@ from pathlib import Path
 
 from bd_timew.util import HelpFormatter, setup_logger
 
+# Mirrors aggregate.POLICIES keys; duplicated here so argparse choices don't
+# force an eager import of the aggregator at CLI-startup time.
+_REPORT_POLICIES = ("billing", "machine", "wallclock")
+
 __doc_summary__ = """\
 bd-timew: Beads + Timewarrior bridge with project lifecycle management.
 
@@ -249,10 +253,48 @@ def get_cli_arguments() -> argparse.Namespace:
         formatter_class=HelpFormatter,
     )
 
+    # -- active --------------------------------------------------------------
+    sub.add_parser(
+        "active",
+        help="Show ALL open intervals across ALL sessions (the multi-active view).",
+        description=(
+            "List every open (started, not yet stopped) interval across every "
+            "session in the log — the concurrent-tracking view the timew backend "
+            "structurally could not provide. The caller's own session is marked '*'."
+        ),
+        formatter_class=HelpFormatter,
+    )
+
+    # -- report --------------------------------------------------------------
+    p_report = sub.add_parser(
+        "report",
+        help="Aggregate closed intervals by a dimension under a named policy.",
+        description=(
+            "Walk the JSONL log, pair + correct intervals, and total closed time "
+            "grouped by an output dimension. Open/stale intervals are excluded "
+            "from totals (surfaced via `active`)."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_report.add_argument(
+        "--by", dest="group_by", default="bead", metavar="<dim>",
+        help="Output grouping: bead|session|actor|role|group_id or a tag key "
+             "(client/case/svc/...). Default: bead.",
+    )
+    p_report.add_argument(
+        "--policy", dest="policy_name", default="billing",
+        choices=sorted(_REPORT_POLICIES), metavar="<policy>",
+        help="Aggregation policy: billing|machine|wallclock. Default: billing.",
+    )
+    p_report.add_argument("--since", default=None, metavar="<YYYY-MM-DD>",
+                          help="Only intervals starting on/after this date.")
+    p_report.add_argument("--until", default=None, metavar="<YYYY-MM-DD>",
+                          help="Only intervals starting on/before this date.")
+
     # -- resolve -------------------------------------------------------------
     p_resolve = sub.add_parser(
         "resolve",
-        help="Print the resolved billing tuple without starting Timewarrior.",
+        help="Print the resolved billing tuple without starting tracking.",
         formatter_class=HelpFormatter,
     )
     p_resolve.add_argument("issue_id", metavar="<issue-id>")
@@ -437,19 +479,27 @@ def main() -> None:
     # for unrelated subcommands.
     if args.cmd == "start":
         from bd_timew.timew import cmd_start
-        cmd_start(args.issue_id)
+        cmd_start(args.issue_id, session_id=args.session_id)
     elif args.cmd == "stop":
         from bd_timew.timew import cmd_stop
-        cmd_stop(args.issue_id, clean=args.clean)
+        cmd_stop(args.issue_id, clean=args.clean, session_id=args.session_id)
     elif args.cmd == "switch":
         from bd_timew.timew import cmd_switch
-        cmd_switch(args.issue_id, from_issue_id=args.from_issue_id)
+        cmd_switch(args.issue_id, from_issue_id=args.from_issue_id,
+                   session_id=args.session_id)
     elif args.cmd == "status":
         from bd_timew.timew import cmd_status
-        cmd_status()
+        cmd_status(session_id=args.session_id)
+    elif args.cmd == "active":
+        from bd_timew.timew import cmd_active
+        cmd_active(session_id=args.session_id)
+    elif args.cmd == "report":
+        from bd_timew.timew import cmd_report
+        cmd_report(group_by=args.group_by, policy_name=args.policy_name,
+                   since=args.since, until=args.until, session_id=args.session_id)
     elif args.cmd == "resolve":
         from bd_timew.timew import cmd_start
-        cmd_start(args.issue_id, dry_run=True)
+        cmd_start(args.issue_id, dry_run=True, session_id=args.session_id)
     elif args.cmd == "session":
         if args.session_action == "current":
             from bd_timew.session import cmd_session_current

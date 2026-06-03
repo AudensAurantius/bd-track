@@ -1,0 +1,192 @@
+"""Tests for the re-wired command layer (timew.py, bd-timew-9hn).
+
+Exercises the JSONL backend behavior change: start/stop/switch/status/active/
+report no longer touch Timewarrior. The key invariants are (a) single-active
+*per session* and (b) a session can never close another session's interval —
+the concurrency bug (bd-timew-nfr) that motivated the rewrite.
+
+Session ids are pinned via the explicit ``session_id=`` arg, which short-circuits
+``resolve_session_id`` so no pointer/env state is involved.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from bd_timew import events, timew
+from bd_timew.aggregate import load_intervals
+from bd_timew.events import log_dir
+
+
+@pytest.fixture
+def proj(monkeypatch, tmp_path):
+    """A fake local beads dir; patch find_beads_dir everywhere it's imported."""
+    bdir = tmp_path / "proj" / ".beads"
+    bdir.mkdir(parents=True)
+    monkeypatch.setattr(timew, "find_beads_dir", lambda project_dir=None: bdir)
+    monkeypatch.setattr(events, "find_beads_dir", lambda project_dir=None: bdir)
+    # Billing + side effects: keep the command pure for the test.
+    monkeypatch.setattr(timew, "load_sidecar", lambda beads_dir: {"default": {}, "patterns": []})
+    monkeypatch.setattr(timew, "resolve_tuple",
+                        lambda labels, sidecar: {"client": "X", "case": "Y", "svc": "Z"})
+    monkeypatch.setattr(timew, "record_activity", lambda *a, **k: None)
+    return bdir
+
+
+def _issue(monkeypatch, *, status="open", title="t"):
+    monkeypatch.setattr(
+        timew, "get_issue",
+        lambda iid: {"id": iid, "title": title, "labels": [], "status": status},
+    )
+
+
+def _claims(monkeypatch):
+    """Capture util.run calls (the bd --claim path is a late `from util import run`)."""
+    calls = []
+    monkeypatch.setattr("bd_timew.util.run", lambda cmd, **k: calls.append(cmd))
+    return calls
+
+
+def _intervals(bdir):
+    return load_intervals(log_dir(bdir.parent))
+
+
+def _open(bdir, session=None):
+    ivs = [iv for iv in _intervals(bdir) if iv.status == "open"]
+    return [iv for iv in ivs if session is None or iv.session == session]
+
+
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+
+def test_start_appends_start_event_with_tags_and_claims(proj, monkeypatch):
+    _issue(monkeypatch, status="open")
+    calls = _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+
+    opens = _open(proj, "s1")
+    assert len(opens) == 1
+    iv = opens[0]
+    assert iv.bead == "bead-1"
+    assert iv.tags == ["client:X", "case:Y", "svc:Z"]
+    # open bead is claimed
+    assert ["bd", "update", "bead-1", "--claim"] in calls
+
+
+def test_start_skips_claim_when_already_in_progress(proj, monkeypatch):
+    _issue(monkeypatch, status="in_progress")
+    calls = _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+    assert not any("--claim" in c for c in calls)
+
+
+def test_start_auto_stops_own_prior_interval(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+    timew.cmd_start("bead-2", session_id="s1")
+    opens = _open(proj, "s1")
+    assert len(opens) == 1 and opens[0].bead == "bead-2"
+
+
+def test_start_does_not_touch_other_session(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-A", session_id="s1")
+    timew.cmd_start("bead-B", session_id="s2")
+    # both sessions still have their own open interval
+    assert len(_open(proj, "s1")) == 1
+    assert len(_open(proj, "s2")) == 1
+
+
+def test_start_records_billable_false_when_no_svc(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    monkeypatch.setattr(timew, "resolve_tuple",
+                        lambda labels, sidecar: {"client": "X", "case": "Y", "svc": None})
+    timew.cmd_start("bead-1", session_id="s1")
+    assert "billable:false" in _open(proj, "s1")[0].tags
+
+
+# ---------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------
+
+def test_stop_closes_own_open_interval(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+    timew.cmd_stop(clean=False, session_id="s1")
+    assert _open(proj, "s1") == []
+
+
+def test_stop_never_closes_other_session(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-A", session_id="s1")
+    timew.cmd_start("bead-B", session_id="s2")
+    # s1 stops with no arg — must NOT close s2's interval
+    timew.cmd_stop(clean=False, session_id="s1")
+    assert _open(proj, "s1") == []
+    assert len(_open(proj, "s2")) == 1
+
+
+def test_stop_with_bead_filters(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    # one open interval; stopping a different bead id is a no-op
+    timew.cmd_start("bead-1", session_id="s1")
+    timew.cmd_stop("bead-OTHER", clean=False, session_id="s1")
+    assert len(_open(proj, "s1")) == 1
+    timew.cmd_stop("bead-1", clean=False, session_id="s1")
+    assert _open(proj, "s1") == []
+
+
+def test_stop_no_active_is_quiet_noop(proj, monkeypatch):
+    _issue(monkeypatch)
+    timew.cmd_stop(clean=False, session_id="s1")  # nothing open
+    assert _intervals(proj) == []
+
+
+# ---------------------------------------------------------------------------
+# switch
+# ---------------------------------------------------------------------------
+
+def test_switch_stops_then_starts(proj, monkeypatch):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+    timew.cmd_switch("bead-2", session_id="s1")
+    opens = _open(proj, "s1")
+    assert len(opens) == 1 and opens[0].bead == "bead-2"
+    # the first interval is closed, not lingering
+    closed = [iv for iv in _intervals(proj) if iv.status == "closed"]
+    assert len(closed) == 1 and closed[0].bead == "bead-1"
+
+
+# ---------------------------------------------------------------------------
+# active / report (smoke — output via logging, assert no crash + state)
+# ---------------------------------------------------------------------------
+
+def test_active_lists_all_sessions(proj, monkeypatch, caplog):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-A", session_id="s1")
+    timew.cmd_start("bead-B", session_id="s2")
+    import logging
+    with caplog.at_level(logging.INFO, logger="bd-timew"):
+        timew.cmd_active(session_id="s1")
+    text = caplog.text
+    assert "bead-A" in text and "bead-B" in text and "s1" in text and "s2" in text
+
+
+def test_report_totals_closed_intervals(proj, monkeypatch, caplog):
+    _issue(monkeypatch)
+    _claims(monkeypatch)
+    timew.cmd_start("bead-1", session_id="s1")
+    timew.cmd_stop(clean=False, session_id="s1")
+    import logging
+    with caplog.at_level(logging.INFO, logger="bd-timew"):
+        timew.cmd_report(group_by="bead", policy_name="billing", session_id="s1")
+    assert "bead-1" in caplog.text and "TOTAL" in caplog.text

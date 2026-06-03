@@ -1,18 +1,100 @@
-"""Timewarrior bridge — start/stop/switch/status/resolve subcommands."""
+"""Command implementations — start/stop/switch/status/active/report/resolve.
+
+Re-wired off Timewarrior onto the append-only JSONL event log (bd-timew-9hn).
+There is no ambient "active interval" anymore: every command re-derives its
+view by reading + folding the per-session logs (``aggregate``). This is what
+makes concurrent sessions safe — a session can only ever close an interval ULID
+it can see, and ``start``/``stop`` touch only the caller's own session.
+
+Single-active-per-session: ``start`` first stops the calling session's own open
+interval(s), preserving the timew muscle-memory ("starting a new thing ends the
+old one") without ever reaching across sessions — the property timew lacked.
+"""
 
 from __future__ import annotations
 
 import datetime as dt
-import re
 from pathlib import Path
 
+from bd_timew.aggregate import (
+    POLICIES,
+    Interval,
+    load_intervals,
+    open_intervals,
+    report,
+)
 from bd_timew.billing import get_issue, load_sidecar, resolve_tuple
-from bd_timew.util import find_beads_dir, record_activity, root_log, run
+from bd_timew.events import log_dir, resolve_provenance, start_interval, stop_interval
+from bd_timew.session import resolve_session_id
+from bd_timew.util import find_beads_dir, record_activity, root_log
+
+# Billing-tuple fields surfaced in start/status/active output. The *shape* is
+# sidecar-defined (bd-timew-qny); these are the BOCO-NetSuite defaults the
+# display layer knows how to label. Stored flat as "client:foo" tags.
+_TUPLE_KEYS = ("client", "case", "svc")
 
 
-def cmd_start(issue_id: str, *, dry_run: bool = False) -> None:
-    """Resolve billing tuple, claim the bead, start a tagged timew interval."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_tags(tuple_: dict) -> list[str]:
+    """Flat billing tags from a resolved tuple (``key:value`` + billable flag)."""
+    tags = [f"{key}:{val}" for key in _TUPLE_KEYS if (val := tuple_.get(key))]
+    if not tuple_.get("svc") or tuple_.get("svc") == "none":
+        tags.append("billable:false")
+    return tags
+
+
+def _tuple_from_tags(tags: list[str]) -> dict[str, str | None]:
+    """Reconstruct the display tuple from flat ``key:value`` tags."""
+    out: dict[str, str | None] = {k: None for k in _TUPLE_KEYS}
+    for tag in tags:
+        for key in _TUPLE_KEYS:
+            if tag.startswith(f"{key}:"):
+                out[key] = tag[len(f"{key}:"):]
+    return out
+
+
+def _format_duration(delta: dt.timedelta) -> str:
+    total = int(delta.total_seconds())
+    hours, rem = divmod(total, 3600)
+    minutes, _ = divmod(rem, 60)
+    return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+
+
+def _elapsed(start_iso: str) -> str:
+    start = dt.datetime.fromisoformat(start_iso)
+    now = dt.datetime.now().astimezone() if start.tzinfo else dt.datetime.now()
+    return _format_duration(now - start)
+
+
+def _project_root(project_dir: Path | None = None) -> Path:
+    """Project root (parent of the active ``.beads/`` dir)."""
+    return find_beads_dir(project_dir).parent
+
+
+def _session_open(
+    session_id: str, project_root: Path, *, bead: str | None = None,
+) -> list[Interval]:
+    """Open intervals belonging to ``session_id`` (optionally for one bead)."""
+    opens = [
+        iv for iv in open_intervals(load_intervals(log_dir(project_root)))
+        if iv.session == session_id
+    ]
+    if bead:
+        opens = [iv for iv in opens if iv.bead == bead]
+    return opens
+
+
+# ---------------------------------------------------------------------------
+# start / stop / switch
+# ---------------------------------------------------------------------------
+
+def cmd_start(issue_id: str, *, dry_run: bool = False, session_id: str | None = None) -> None:
+    """Resolve the billing tuple, claim the bead, append a ``start`` event."""
     beads_dir = find_beads_dir()
+    project_root = beads_dir.parent
     sidecar = load_sidecar(beads_dir)
     issue = get_issue(issue_id)
     labels: list[str] = issue.get("labels") or []
@@ -20,136 +102,173 @@ def cmd_start(issue_id: str, *, dry_run: bool = False) -> None:
 
     root_log.info("Issue:  %s  %s", issue.get("id", "?"), issue.get("title", ""))
     root_log.info("Labels: %s", ", ".join(labels) or "(none)")
-    root_log.info("Client: %s", tuple_["client"] or "(none)")
-    root_log.info("Case:   %s", tuple_["case"] or "(none)")
-    root_log.info("Svc:    %s", tuple_["svc"] or "(none)")
+    for key in _TUPLE_KEYS:
+        root_log.info("%-7s %s", key.capitalize() + ":", tuple_[key] or "(none)")
 
     if dry_run:
         return
 
-    tags = [issue_id]
-    for key in ("client", "case", "svc"):
-        val = tuple_[key]
-        if val:
-            tags.append(f"{key}:{val}")
-    if not tuple_["svc"] or tuple_["svc"] == "none":
-        tags.append("billable:false")
+    sid = resolve_session_id(project_root, explicit=session_id)
 
-    run(["timew", "start", *tags])
-    title = issue.get("title", "")
-    if title:
-        run(["timew", "annotate", f"{issue_id}: {title}"])
+    # Single-active-per-session: end this session's own open interval(s) first.
+    for iv in _session_open(sid, project_root):
+        stop_interval(iv.interval, session_id=sid, project_dir=project_root)
+        root_log.info("Stopped prior interval %s (%s)", iv.bead or "?", _elapsed(iv.start))
+
+    tags = _build_tags(tuple_)
+    provenance = resolve_provenance()
+    interval = start_interval(
+        issue_id, tags, session_id=sid, project_dir=project_root, **provenance,
+    )
+    root_log.info("Started interval %s  [session %s]", interval[:8], sid)
+
     if issue.get("status") != "in_progress":
+        from bd_timew.util import run
         run(["bd", "update", issue_id, "--claim"], check=False)
 
-    record_activity(str(beads_dir.parent.resolve()))
+    record_activity(str(project_root.resolve()))
 
 
-def cmd_stop(issue_id: str | None = None, *, clean: bool = True) -> None:
-    """Stop the active timew interval (tagged or untagged).
+def cmd_stop(issue_id: str | None = None, *, clean: bool = True,
+             session_id: str | None = None) -> None:
+    """Append a ``stop`` event for this session's open interval(s).
 
-    When ``clean`` is True (default), runs a queue sweep afterward to drop any
-    closed/deferred beads from any queue scope. Pass ``clean=False`` (CLI:
-    ``--no-clean``) to skip — useful when stopping a bead that is intentionally
-    closed but should remain queued for a follow-up.
+    With ``issue_id`` given, stops only the interval(s) tagged with that bead.
+    Unlike the old timew backend, a no-argument stop can *never* reach another
+    session's interval — it only closes ULIDs in the caller's own session log.
+
+    When ``clean`` is True (default), sweeps closed/deferred beads from queue
+    scopes afterward (``--no-clean`` to skip).
     """
-    # Record activity before stopping so the timestamp reflects last use.
-    result = run(["bd", "where"], check=False, capture=True)
-    if result.returncode == 0:
-        project_path = result.stdout.strip().split("\n", 1)[0].strip()
-        beads_dir = Path(project_path)
-        record_activity(str(beads_dir.parent.resolve()))
-    if issue_id:
-        run(["timew", "stop", issue_id], check=False)
-    else:
-        run(["timew", "stop"], check=False)
+    project_root = _project_root()
+    sid = resolve_session_id(project_root, explicit=session_id)
+    record_activity(str(project_root.resolve()))
+
+    opens = _session_open(sid, project_root, bead=issue_id)
+    if not opens:
+        scope = f" for {issue_id}" if issue_id else ""
+        root_log.info("no active interval%s in this session (%s)", scope, sid)
+    for iv in opens:
+        stop_interval(iv.interval, session_id=sid, project_dir=project_root)
+        root_log.info("Stopped %s  %s  (%s)", iv.bead or "(no bead)",
+                      iv.interval[:8], _elapsed(iv.start))
 
     if clean:
-        # Late import keeps cmd_status / cmd_resolve startup snappy.
         from bd_timew.queue import cmd_clean
         try:
             cmd_clean(quiet=True)
         except SystemExit:
-            # No active beads workspace — silently skip the sweep.
             pass
 
 
-def cmd_switch(issue_id: str, *, from_issue_id: str | None = None) -> None:
-    """Stop one bead and start another (non-transactional).
-
-    The intervening clean step is skipped: ``from_issue_id`` typically isn't
-    closed yet, and we're about to re-prime the workspace with ``cmd_start``.
-    """
-    cmd_stop(from_issue_id, clean=False)
-    cmd_start(issue_id)
+def cmd_switch(issue_id: str, *, from_issue_id: str | None = None,
+               session_id: str | None = None) -> None:
+    """Stop the current interval and start one on ``issue_id`` (composition)."""
+    cmd_stop(from_issue_id, clean=False, session_id=session_id)
+    cmd_start(issue_id, session_id=session_id)
 
 
-def _timew_get(key: str) -> str | None:
-    result = run(["timew", "get", key], check=False, capture=True)
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
+# ---------------------------------------------------------------------------
+# status / active
+# ---------------------------------------------------------------------------
 
+def cmd_status(*, session_id: str | None = None) -> None:
+    """Show this session's open interval(s): bead, tuple, elapsed."""
+    project_root = _project_root()
+    sid = resolve_session_id(project_root, explicit=session_id)
+    all_open = open_intervals(load_intervals(log_dir(project_root)))
+    mine = [iv for iv in all_open if iv.session == sid]
 
-def _format_elapsed(start_iso: str) -> str:
-    compact = re.fullmatch(r"(\d{8})T(\d{6})Z", start_iso)
-    if compact:
-        date_part, time_part = compact.groups()
-        start = dt.datetime.strptime(
-            f"{date_part}T{time_part}Z", "%Y%m%dT%H%M%SZ"
-        ).replace(tzinfo=dt.timezone.utc)
-        now = dt.datetime.now(dt.timezone.utc)
-    else:
-        start = dt.datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-        now = (
-            dt.datetime.now(dt.timezone.utc)
-            if start.tzinfo
-            else dt.datetime.now()
-        )
-    delta = now - start
-    total_seconds = int(delta.total_seconds())
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, _ = divmod(remainder, 60)
-    return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
-
-
-def cmd_status() -> None:
-    """Show the active timew interval's bead, tuple, and elapsed time."""
-    start_iso = _timew_get("dom.active.start")
-    if not start_iso:
-        root_log.info("no active timew interval")
+    if not mine:
+        root_log.info("no active interval in this session (%s)", sid)
+        others = len({iv.session for iv in all_open})
+        if others:
+            root_log.info("(%d interval(s) active in other sessions — see `bd-track active`)",
+                          len(all_open))
         return
 
-    tag_count = int(_timew_get("dom.active.tag.count") or "0")
-    tags = [
-        t for i in range(1, tag_count + 1)
-        if (t := _timew_get(f"dom.active.tag.{i}"))
-    ]
-
-    bead_id = next((t for t in tags if ":" not in t), None)
-    elapsed = _format_elapsed(start_iso)
-
-    if bead_id:
-        issue = None
-        try:
-            issue = get_issue(bead_id)
-        except SystemExit:
-            pass
-        title = (issue or {}).get("title", "")
-        status = (issue or {}).get("status", "")
-        root_log.info("Tracking: %s  %s", bead_id, title)
+    for iv in mine:
+        title = ""
+        status = ""
+        if iv.bead:
+            try:
+                issue = get_issue(iv.bead)
+                title = issue.get("title", "")
+                status = issue.get("status", "")
+            except SystemExit:
+                pass
+        root_log.info("Tracking: %s  %s", iv.bead or "(no bead)", title)
         if status:
             root_log.info("Status:   %s", status)
+        root_log.info("Elapsed:  %s", _elapsed(iv.start))
+        tuple_ = _tuple_from_tags(iv.tags)
+        for key in _TUPLE_KEYS:
+            root_log.info("%-9s %s", key.capitalize() + ":", tuple_[key] or "(none)")
+
+    other = [iv for iv in all_open if iv.session != sid]
+    if other:
+        root_log.info("(%d interval(s) active in other sessions — see `bd-track active`)",
+                      len(other))
+
+
+def cmd_active(*, session_id: str | None = None) -> None:
+    """Show ALL open intervals across ALL sessions (the multi-active view)."""
+    project_root = _project_root()
+    sid = resolve_session_id(project_root, explicit=session_id)
+    opens = sorted(open_intervals(load_intervals(log_dir(project_root))),
+                   key=lambda iv: iv.start or "")
+    if not opens:
+        root_log.info("no active intervals in any session")
+        return
+    root_log.info("%d active interval(s):", len(opens))
+    for iv in opens:
+        marker = "*" if iv.session == sid else " "
+        tuple_ = _tuple_from_tags(iv.tags)
+        tup = " ".join(f"{k}:{v}" for k in _TUPLE_KEYS if (v := tuple_[k])) or "(no tuple)"
+        root_log.info("%s %-20s %-14s %-7s  %s", marker, iv.session or "?",
+                      iv.bead or "(no bead)", _elapsed(iv.start), tup)
+
+
+# ---------------------------------------------------------------------------
+# report
+# ---------------------------------------------------------------------------
+
+def _in_range(iv: Interval, since: dt.date | None, until: dt.date | None) -> bool:
+    if iv.start is None:
+        return False
+    d = dt.datetime.fromisoformat(iv.start).date()
+    if since and d < since:
+        return False
+    if until and d > until:
+        return False
+    return True
+
+
+def cmd_report(*, group_by: str = "bead", policy_name: str = "billing",
+               since: str | None = None, until: str | None = None,
+               session_id: str | None = None) -> None:
+    """Aggregate closed intervals; group by a dimension under a named policy."""
+    project_root = _project_root()
+    policy = POLICIES[policy_name]
+    since_d = dt.date.fromisoformat(since) if since else None
+    until_d = dt.date.fromisoformat(until) if until else None
+    intervals = [iv for iv in load_intervals(log_dir(project_root))
+                 if _in_range(iv, since_d, until_d)]
+
+    rows = report(intervals, group_by=group_by, policy=policy)
+    if not rows:
+        root_log.info("no closed intervals in range")
     else:
-        root_log.info("Tracking: (no bead tag found on active interval)")
+        root_log.info("Report by %s  [policy: %s]", group_by, policy_name)
+        total = dt.timedelta(0)
+        for r in rows:
+            root_log.info("  %-24s %8s  (%d interval(s))",
+                          str(r.group) if r.group is not None else "(none)",
+                          _format_duration(r.duration), r.intervals)
+            total += r.duration
+        root_log.info("  %-24s %8s", "TOTAL", _format_duration(total))
 
-    root_log.info("Elapsed:  %s", elapsed)
-
-    tuple_display: dict[str, str | None] = {"client": None, "case": None, "svc": None}
-    for tag in tags:
-        for key in tuple_display:
-            if tag.startswith(f"{key}:"):
-                tuple_display[key] = tag[len(f"{key}:"):]
-    root_log.info("Client:   %s", tuple_display["client"] or "(none)")
-    root_log.info("Case:     %s", tuple_display["case"] or "(none)")
-    root_log.info("Svc:      %s", tuple_display["svc"] or "(none)")
+    stale = [iv for iv in intervals if iv.status == "open"]
+    if stale:
+        root_log.info("(%d open/stale interval(s) excluded from totals — see `bd-track active`)",
+                      len(stale))
