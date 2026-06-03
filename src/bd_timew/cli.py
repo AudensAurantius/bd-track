@@ -184,6 +184,11 @@ def get_cli_arguments() -> argparse.Namespace:
         type=lambda v: v.strip().upper(),
         help="Logging verbosity (DEBUG, INFO, WARNING, ERROR).",
     )
+    parser.add_argument(
+        "--session-id", metavar="<id>", default=None,
+        help="Explicit session id (overrides $BD_TIMEW_SESSION_ID, "
+             "$CLAUDE_CODE_SESSION_ID, and the current-session pointer).",
+    )
 
     sub = parser.add_subparsers(
         dest="cmd", required=True,
@@ -251,6 +256,28 @@ def get_cli_arguments() -> argparse.Namespace:
         formatter_class=HelpFormatter,
     )
     p_resolve.add_argument("issue_id", metavar="<issue-id>")
+
+    # -- session -------------------------------------------------------------
+    p_session = sub.add_parser(
+        "session",
+        help="Inspect session identity (currently: 'session current' only).",
+        description=(
+            "Session identity for the JSONL timetracking backend. Resolution "
+            "precedence: --session-id → $BD_TIMEW_SESSION_ID → "
+            "$CLAUDE_CODE_SESSION_ID → current-session pointer → generated id."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_session_sub = p_session.add_subparsers(dest="session_action", required=True)
+    p_session_current = p_session_sub.add_parser(
+        "current",
+        help="Resolve and print the session id for this invocation context.",
+        formatter_class=HelpFormatter,
+    )
+    p_session_current.add_argument(
+        "--project-dir", type=Path, default=None,
+        help="Project root containing .beads/. Defaults to active workspace.",
+    )
 
     # -- cleanup -------------------------------------------------------------
     p_cleanup = sub.add_parser(
@@ -423,6 +450,10 @@ def main() -> None:
     elif args.cmd == "resolve":
         from bd_timew.timew import cmd_start
         cmd_start(args.issue_id, dry_run=True)
+    elif args.cmd == "session":
+        if args.session_action == "current":
+            from bd_timew.session import cmd_session_current
+            cmd_session_current(project_dir=args.project_dir, explicit=args.session_id)
     elif args.cmd == "cleanup":
         from bd_timew.project import cmd_cleanup
         cmd_cleanup(args.days, commit=args.commit, project_dir=args.project_dir)
