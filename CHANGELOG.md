@@ -6,6 +6,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-02
+
+First milestone of the timew → JSONL backend rewrite (epic `bd-timew-nfr`):
+the event-log foundation and session identity. Internal/library layers — the
+CLI still drives Timewarrior until the cutover (which also renames the package
+to `bd-track`).
+
+### Added
+
+- **Session identity** (`bd_timew.session`, `bd-timew session current`,
+  global `--session-id`) — resolves a session id via `--session-id` →
+  `$BD_TIMEW_SESSION_ID` → `$CLAUDE_CODE_SESSION_ID` → a per-terminal
+  current-session pointer → a generated human-friendly `word.word.word` id.
+  Claude sessions resolve automatically with no cooperation needed.
+- **JSONL event-log backend** (`bd_timew.events`) — append-only schema v1
+  (`start`/`stop`/`cancel`/`correction`) with dual ULIDs (event + interval),
+  a flat org-agnostic `tags` list, and `group_id`/`actor`/`role` provenance.
+  Provenance is set on `start` and mutable only via `correction`
+  (per-field latest-wins). Atomic `O_APPEND` appender; per-session logs under
+  `<beads_dir>/bd-timew/sessions/` (server-mode fallback
+  `~/.local/share/bd-timew/<project>/`). Not yet wired into the CLI.
+
 ## [0.2.0] - 2026-05-04
 
 Bundled release: queue surface refactor + `init-project` bootstrapping +

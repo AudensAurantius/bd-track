@@ -1,6 +1,6 @@
 [project]
 name = "bd-timew"
-version = "0.2.0"
+version = "0.3.0"
 description = "Beads + Timewarrior bridge with project lifecycle management and scoped execution queues"
 readme = "README.md"
 requires-python = ">=3.10"
