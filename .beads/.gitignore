@@ -2,6 +2,13 @@
 dolt/
 embeddeddolt/
 
+# bd-track session event logs (local-only in THIS dev repo).
+# In real user projects these ride beads sync (the tracked-logs design); but
+# this is bd-track's own dev repo, and logs here carry real client/billing tags
+# (incl. imported-timew.jsonl from `migrate import`) that must not be committed.
+bd-track/sessions/
+bd-timew/sessions/
+
 # Runtime files
 bd.sock
 bd.sock.startlock
