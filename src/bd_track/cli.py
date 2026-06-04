@@ -418,12 +418,16 @@ def get_cli_arguments() -> argparse.Namespace:
     # -- migrate -------------------------------------------------------------
     p_migrate = sub.add_parser(
         "migrate",
-        help="One-way migrations (currently: 'migrate rename' for bd-timew → bd-track).",
+        help=(
+            "One-way migrations: 'migrate rename' and 'migrate import' for "
+            "the bd-timew → bd-track cutover."
+        ),
         description=(
             "Migration subcommands. 'rename' completes the bd-timew → bd-track "
             "cutover by renaming on-disk artifacts (config/cache/state dirs, the "
             ".beads sidecar + session logs, and BD_TIMEW_* env vars) so the "
-            "read-fallback shims stop firing."
+            "read-fallback shims stop firing. 'import' replays a Timewarrior "
+            "export into the JSONL event log."
         ),
         formatter_class=HelpFormatter,
     )
