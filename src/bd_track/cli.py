@@ -415,6 +415,49 @@ def get_cli_arguments() -> argparse.Namespace:
     )
     p_server_stop.add_argument("--path", type=Path, default=None)
 
+    # -- migrate -------------------------------------------------------------
+    p_migrate = sub.add_parser(
+        "migrate",
+        help="One-way migrations (currently: 'migrate rename' for bd-timew → bd-track).",
+        description=(
+            "Migration subcommands. 'rename' completes the bd-timew → bd-track "
+            "cutover by renaming on-disk artifacts (config/cache/state dirs, the "
+            ".beads sidecar + session logs, and BD_TIMEW_* env vars) so the "
+            "read-fallback shims stop firing."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_migrate_sub = p_migrate.add_subparsers(dest="migrate_action", required=True,
+                                             title="migrate actions", metavar="<action>")
+    p_migrate_rename = p_migrate_sub.add_parser(
+        "rename",
+        help="Rename bd-timew on-disk artifacts to bd-track (dry-run by default).",
+        description=(
+            "Rename the global ~/.config|cache|state|local-share/bd-timew dirs, "
+            "this project's .beads/bd-timew.yaml sidecar + <beads>/bd-timew session "
+            "logs, and rewrite BD_TIMEW_* → BD_TRACK_* in .envrc/.env/.envrc.local/"
+            "mise.toml. Dry-run by default; chezmoi-managed home/dotfile targets are "
+            "skipped with a warning (use `chezmoi apply` for those)."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_migrate_rename.add_argument(
+        "--project-dir", type=Path, default=None,
+        help="Project root containing .beads/. Defaults to active workspace.",
+    )
+    p_migrate_rename.add_argument(
+        "--all-repos", action="store_true", default=False,
+        help="Sweep every repo registered in repos.yaml, not just the current one.",
+    )
+    p_migrate_rename.add_argument(
+        "--apply", action="store_true", default=False,
+        help="Perform the migration (default is a dry-run preview).",
+    )
+    p_migrate_rename.add_argument(
+        "--no-backup", action="store_false", dest="backup", default=True,
+        help="Skip the per-file .bak backup before rewriting env files.",
+    )
+
     # -- queue (parent) + push/unshift/pop/peek/list/remove/clear/clean/generate/prune
     _add_queue_parsers(sub)
 
@@ -555,5 +598,12 @@ def main() -> None:
     elif args.cmd == "server-stop":
         from bd_track.server import cmd_server_stop
         cmd_server_stop(args.path)
+    elif args.cmd == "migrate":
+        if args.migrate_action == "rename":
+            from bd_track.migrate import cmd_migrate_rename
+            cmd_migrate_rename(
+                project_dir=args.project_dir, all_repos=args.all_repos,
+                apply=args.apply, backup=args.backup,
+            )
     elif args.cmd == "queue":
         _dispatch_queue(args)
