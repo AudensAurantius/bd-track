@@ -2,8 +2,6 @@ architecture:
 - bd-timew-7o3
 - bd-timew-6g4
 cutover:
-- bd-timew-4g4
-- bd-timew-mm0
 - bd-timew-cjq
 - bd-timew-a33
 - bd-timew-ive
