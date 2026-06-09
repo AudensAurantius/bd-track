@@ -491,6 +491,168 @@ def cmd_amend(
 
 
 # ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+def _fmt_ts(ts: str | None) -> str:
+    """Short timestamp for table display: drop sub-second and timezone noise."""
+    if ts is None:
+        return ""
+    try:
+        return dt.datetime.fromisoformat(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ts
+
+
+def cmd_list(
+    *,
+    from_dt: str | None = None,
+    to_dt: str | None = None,
+    bead: str | None = None,
+    actor: str | None = None,
+    statuses: list[str] | None = None,
+    session_filter: str | None = None,
+    fmt: str = "table",
+    pretty: bool = False,
+    sort_by: str = "start",
+    desc: bool = False,
+    project_dir: Path | None = None,
+    global_scope: bool = False,
+    session_id: str | None = None,
+) -> None:
+    """List intervals matching the given filters."""
+    from bd_track.util import parse_datetime
+
+    # Resolve date range. Default: today if neither bound specified.
+    use_default_range = from_dt is None and to_dt is None
+    from_parsed: dt.datetime | None = None
+    to_parsed: dt.datetime | None = None
+
+    if use_default_range:
+        today = dt.date.today()
+        from_parsed = dt.datetime.combine(today, dt.time.min).astimezone()
+    else:
+        if from_dt is not None:
+            try:
+                from_parsed = parse_datetime(from_dt)
+            except ValueError as exc:
+                root_log.error("--from: %s", exc)
+                sys.exit(1)
+        if to_dt is not None:
+            try:
+                to_parsed = parse_datetime(to_dt)
+            except ValueError as exc:
+                root_log.error("--to: %s", exc)
+                sys.exit(1)
+
+    roots = _project_roots(project_dir, global_scope)
+    all_ivs: list[Interval] = []
+    for root in roots:
+        all_ivs.extend(load_intervals(log_dir(root)))
+
+    # Apply filters.
+    filtered: list[Interval] = []
+    for iv in all_ivs:
+        # Date range filter on start time.
+        if iv.start is not None:
+            start_ts = dt.datetime.fromisoformat(iv.start)
+            if from_parsed is not None and start_ts < from_parsed:
+                continue
+            if to_parsed is not None and start_ts > to_parsed:
+                continue
+        elif from_parsed is not None:
+            # No start recorded; exclude when a lower bound is set.
+            continue
+
+        if statuses is not None and iv.status not in statuses:
+            continue
+        if bead is not None and iv.bead != bead:
+            continue
+        if actor is not None and iv.actor != actor:
+            continue
+        if session_filter is not None:
+            if iv.session is None or not iv.session.startswith(session_filter):
+                continue
+        filtered.append(iv)
+
+    # Sort.
+    def _sort_key(iv: Interval) -> object:
+        if sort_by == "stop":
+            return iv.stop or ""
+        if sort_by == "duration":
+            return iv.duration.total_seconds()
+        return iv.start or ""
+
+    filtered.sort(key=_sort_key, reverse=desc)
+
+    if not filtered:
+        root_log.info("no intervals matched")
+        return
+
+    # Serialize to list-of-dicts for non-table formats.
+    rows = [_interval_to_dict(iv) for iv in filtered]
+
+    if fmt == "json":
+        import json
+        indent = 2 if pretty else None
+        print(json.dumps(rows, indent=indent, ensure_ascii=False))
+        return
+
+    if fmt == "yaml":
+        import yaml
+        print(yaml.dump(rows, default_flow_style=False, allow_unicode=True), end="")
+        return
+
+    if fmt in ("csv", "tsv"):
+        import csv, io
+        sep = "\t" if fmt == "tsv" else ","
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter=sep)
+        if rows:
+            w.writerow(rows[0].keys())
+        for row in rows:
+            w.writerow([
+                "|".join(v) if isinstance(v, list) else ("" if v is None else str(v))
+                for v in row.values()
+            ])
+        print(buf.getvalue(), end="")
+        return
+
+    # table (default) — Rich
+    from rich.console import Console
+    from rich.table import Table
+    console = Console()
+    table = Table(show_header=True, box=None, padding=(0, 1))
+    table.add_column("interval", style="bold cyan", no_wrap=True)
+    table.add_column("status", no_wrap=True)
+    table.add_column("bead", no_wrap=True)
+    table.add_column("start", no_wrap=True)
+    table.add_column("stop", no_wrap=True)
+    table.add_column("duration", no_wrap=True)
+    table.add_column("session", no_wrap=True)
+    table.add_column("tags")
+
+    for iv in filtered:
+        dur = _format_duration(iv.duration) if iv.stop else "(open)"
+        stop_display = _fmt_ts(iv.stop) if iv.stop else "(open)"
+        session_short = (iv.session or "")[:8] or "(none)"
+        tags_display = ", ".join(iv.tags) if iv.tags else ""
+        table.add_row(
+            iv.interval[:8],
+            iv.status,
+            iv.bead or "",
+            _fmt_ts(iv.start),
+            stop_display,
+            dur,
+            session_short,
+            tags_display,
+        )
+
+    root_log.info("%d interval(s) matched", len(filtered))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # status / active
 # ---------------------------------------------------------------------------
 

@@ -363,6 +363,63 @@ def get_cli_arguments() -> argparse.Namespace:
         help="Stop only the interval tagged with this bead ID (recommended).",
     )
 
+    # -- list ----------------------------------------------------------------
+    p_list = sub.add_parser(
+        "list",
+        help="List intervals with filtering and sorting (discovery before show/amend/cancel).",
+        description=(
+            "Walk the JSONL log and emit an itemized list of intervals with their "
+            "ULIDs prominently shown. Filters narrow the result; --from/--to accept "
+            "natural language or ISO-8601. Default (no range flags): intervals whose "
+            "start falls on today."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_list.add_argument(
+        "--from", dest="from_dt", metavar="<datetime>", default=None,
+        help="Include intervals starting at or after this time (natural language or ISO-8601).",
+    )
+    p_list.add_argument(
+        "--to", dest="to_dt", metavar="<datetime>", default=None,
+        help="Include intervals starting at or before this time (natural language or ISO-8601).",
+    )
+    p_list.add_argument(
+        "--bead", metavar="<id>", default=None,
+        help="Filter to intervals tagged with this bead ID.",
+    )
+    p_list.add_argument(
+        "--actor", metavar="<str>", default=None,
+        help="Filter by actor field.",
+    )
+    p_list.add_argument(
+        "--status", dest="status_filter", metavar="open|closed|cancelled",
+        action="append", default=None,
+        choices=("open", "closed", "cancelled"),
+        help="Include only intervals with this status (repeatable; default: all).",
+    )
+    p_list.add_argument(
+        "--session", dest="session_filter", metavar="<uuid-prefix>", default=None,
+        help="Filter to intervals from this session (full UUID or unique prefix).",
+    )
+    p_list.add_argument(
+        "--format", dest="fmt", default="table",
+        choices=("table", "json", "yaml", "csv", "tsv"),
+        help="Output format (default: table).",
+    )
+    p_list.add_argument(
+        "--pretty", action="store_true", default=False,
+        help="2-space indent for JSON output; no-op for other formats.",
+    )
+    p_list.add_argument(
+        "--sort", dest="sort_by", default="start",
+        choices=("start", "stop", "duration"),
+        help="Sort field (default: start).",
+    )
+    p_list.add_argument(
+        "--desc", action="store_true", default=False,
+        help="Reverse sort order.",
+    )
+
     # -- status --------------------------------------------------------------
     sub.add_parser(
         "status",
@@ -725,6 +782,23 @@ def main() -> None:
         from bd_track.track import cmd_switch
         cmd_switch(args.issue_id, from_issue_id=args.from_issue_id,
                    session_id=args.session_id)
+    elif args.cmd == "list":
+        from bd_track.track import cmd_list
+        cmd_list(
+            from_dt=args.from_dt,
+            to_dt=args.to_dt,
+            bead=args.bead,
+            actor=args.actor,
+            statuses=args.status_filter,
+            session_filter=args.session_filter,
+            fmt=args.fmt,
+            pretty=args.pretty,
+            sort_by=args.sort_by,
+            desc=args.desc,
+            project_dir=_resolve_project_scope(args),
+            global_scope=args.global_scope,
+            session_id=args.session_id,
+        )
     elif args.cmd == "status":
         from bd_track.track import cmd_status
         cmd_status(session_id=args.session_id)
