@@ -74,6 +74,14 @@ def _project_root(project_dir: Path | None = None) -> Path:
     return find_beads_dir(project_dir).parent
 
 
+def _project_roots(project_dir: Path | None, global_scope: bool) -> list[Path]:
+    """Resolve the set of project roots implied by scope flags."""
+    if global_scope:
+        from bd_track.util import all_project_dirs
+        return all_project_dirs()
+    return [_project_root(project_dir)]
+
+
 def _session_open(
     session_id: str, project_root: Path, *, bead: str | None = None,
 ) -> list[Interval]:
@@ -211,18 +219,30 @@ def cmd_status(*, session_id: str | None = None) -> None:
                       len(other))
 
 
-def cmd_active(*, session_id: str | None = None) -> None:
+def cmd_active(*, session_id: str | None = None,
+               project_dir: Path | None = None,
+               global_scope: bool = False) -> None:
     """Show ALL open intervals across ALL sessions (the multi-active view)."""
-    project_root = _project_root()
-    sid = resolve_session_id(project_root, explicit=session_id)
-    opens = sorted(open_intervals(load_intervals(log_dir(project_root))),
-                   key=lambda iv: iv.start or "")
+    roots = _project_roots(project_dir, global_scope)
+    # Resolve the caller's session id from the first available root; fall back
+    # to None (no '*' marker) if the root has no local beads workspace.
+    sid: str | None = None
+    try:
+        sid = resolve_session_id(roots[0], explicit=session_id)
+    except SystemExit:
+        pass
+
+    all_open: list[Interval] = []
+    for root in roots:
+        all_open.extend(open_intervals(load_intervals(log_dir(root))))
+    opens = sorted(all_open, key=lambda iv: iv.start or "")
+
     if not opens:
         root_log.info("no active intervals in any session")
         return
     root_log.info("%d active interval(s):", len(opens))
     for iv in opens:
-        marker = "*" if iv.session == sid else " "
+        marker = "*" if (sid and iv.session == sid) else " "
         tuple_ = _tuple_from_tags(iv.tags)
         tup = " ".join(f"{k}:{v}" for k in _TUPLE_KEYS if (v := tuple_[k])) or "(no tuple)"
         root_log.info("%s %-20s %-14s %-7s  %s", marker, iv.session or "?",
@@ -246,14 +266,18 @@ def _in_range(iv: Interval, since: dt.date | None, until: dt.date | None) -> boo
 
 def cmd_report(*, group_by: str = "bead", policy_name: str = "billing",
                since: str | None = None, until: str | None = None,
-               session_id: str | None = None) -> None:
+               session_id: str | None = None,
+               project_dir: Path | None = None,
+               global_scope: bool = False) -> None:
     """Aggregate closed intervals; group by a dimension under a named policy."""
-    project_root = _project_root()
+    roots = _project_roots(project_dir, global_scope)
     policy = POLICIES[policy_name]
     since_d = dt.date.fromisoformat(since) if since else None
     until_d = dt.date.fromisoformat(until) if until else None
-    intervals = [iv for iv in load_intervals(log_dir(project_root))
-                 if _in_range(iv, since_d, until_d)]
+    all_ivs: list[Interval] = []
+    for root in roots:
+        all_ivs.extend(load_intervals(log_dir(root)))
+    intervals = [iv for iv in all_ivs if _in_range(iv, since_d, until_d)]
 
     rows = report(intervals, group_by=group_by, policy=policy)
     if not rows:

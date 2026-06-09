@@ -197,6 +197,16 @@ def get_cli_arguments() -> argparse.Namespace:
              "$CLAUDE_CODE_SESSION_ID, and the current-session pointer).",
     )
 
+    scope_group = parser.add_mutually_exclusive_group()
+    scope_group.add_argument(
+        "--project", metavar="<slug-or-path>", dest="project_scope", default=None,
+        help="Override project scope: resolve <slug-or-path> via repos.yaml name or path.",
+    )
+    scope_group.add_argument(
+        "--global", action="store_true", dest="global_scope", default=False,
+        help="Operate across all repos registered in repos.yaml.",
+    )
+
     sub = parser.add_subparsers(
         dest="cmd", required=True,
         title="subcommands", metavar="<command>",
@@ -544,6 +554,14 @@ def _dispatch_queue(args: argparse.Namespace) -> None:
         return
 
 
+def _resolve_project_scope(args: argparse.Namespace) -> "Path | None":
+    """Return the project_dir implied by ``--project``, or ``None``."""
+    if args.project_scope:
+        from bd_track.util import resolve_project_dir
+        return resolve_project_dir(args.project_scope)
+    return None
+
+
 def main_deprecated() -> None:
     """Entrypoint for the deprecated ``bd-timew`` alias: warn, then dispatch.
 
@@ -584,11 +602,15 @@ def main() -> None:
         cmd_status(session_id=args.session_id)
     elif args.cmd == "active":
         from bd_track.track import cmd_active
-        cmd_active(session_id=args.session_id)
+        cmd_active(session_id=args.session_id,
+                   project_dir=_resolve_project_scope(args),
+                   global_scope=args.global_scope)
     elif args.cmd == "report":
         from bd_track.track import cmd_report
         cmd_report(group_by=args.group_by, policy_name=args.policy_name,
-                   since=args.since, until=args.until, session_id=args.session_id)
+                   since=args.since, until=args.until, session_id=args.session_id,
+                   project_dir=_resolve_project_scope(args),
+                   global_scope=args.global_scope)
     elif args.cmd == "resolve":
         from bd_track.track import cmd_start
         cmd_start(args.issue_id, dry_run=True, session_id=args.session_id)

@@ -185,3 +185,75 @@ def record_activity(project_path: str) -> None:
     state = load_activity_state()
     state[project_path] = dt.datetime.now(dt.timezone.utc).isoformat()
     save_activity_state(state)
+
+
+# ---------------------------------------------------------------------------
+# repos.yaml helpers
+# ---------------------------------------------------------------------------
+
+def load_repos_config() -> dict:
+    """Load ``~/.config/bd-track/repos.yaml``; return empty dict if missing."""
+    import yaml  # pyyaml — project dep, not stdlib
+    if not REPOS_CONFIG.exists():
+        return {}
+    with REPOS_CONFIG.open() as f:
+        return yaml.safe_load(f) or {}
+
+
+def resolve_project_dir(slug_or_path: str) -> Path:
+    """Resolve ``--project <slug-or-path>`` to a root path via repos.yaml.
+
+    Matches by path basename (short name) or by full path equality.
+    """
+    config = load_repos_config()
+    repos = config.get("repos") or []
+    candidate = Path(slug_or_path).expanduser()
+    for repo in repos:
+        repo_path = Path(repo["path"])
+        if repo_path == candidate or repo_path.name == slug_or_path:
+            return repo_path
+    known = ", ".join(Path(r["path"]).name for r in repos)
+    sys.exit(
+        f"bd-track: --project {slug_or_path!r} not found in repos.yaml"
+        + (f" (known: {known})" if known else "")
+    )
+
+
+def all_project_dirs() -> list[Path]:
+    """Return all project root paths from repos.yaml (for ``--global``)."""
+    config = load_repos_config()
+    repos = config.get("repos") or []
+    if not repos:
+        sys.exit("bd-track: --global requires at least one entry in repos.yaml")
+    return [Path(r["path"]) for r in repos]
+
+
+# ---------------------------------------------------------------------------
+# Datetime parsing
+# ---------------------------------------------------------------------------
+
+def parse_datetime(value: str) -> dt.datetime:
+    """Parse a human-readable or ISO-8601 datetime string.
+
+    Tries dateparser first (natural language, relative expressions), then falls
+    back to ``datetime.fromisoformat()`` for strict ISO-8601. Always returns a
+    timezone-aware datetime. Raises ``ValueError`` if neither succeeds.
+    """
+    try:
+        import dateparser as _dp
+        result = _dp.parse(
+            value,
+            settings={"PREFER_DATES_FROM": "past", "RETURN_AS_TIMEZONE_AWARE": True},
+        )
+        if result is not None:
+            return result
+    except ImportError:
+        pass
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return parsed
+    except ValueError:
+        pass
+    raise ValueError(f"cannot parse datetime: {value!r}")
