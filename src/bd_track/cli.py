@@ -254,6 +254,25 @@ def get_cli_arguments() -> argparse.Namespace:
         help="Skip the post-stop queue sweep for closed/deferred beads.",
     )
 
+    # -- cancel --------------------------------------------------------------
+    p_cancel = sub.add_parser(
+        "cancel",
+        help="Drop an interval from aggregation by appending a cancel event.",
+        description=(
+            "Appends a cancel event for the given interval ULID (or unique "
+            "8-character prefix). Cancelled intervals are excluded from all "
+            "reports and totals; the original events are never deleted. Prompts "
+            "for confirmation unless --yes is given."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_cancel.add_argument("interval_id", metavar="<interval-id>",
+                          help="Full interval ULID or unique 8-character prefix.")
+    p_cancel.add_argument(
+        "--yes", "-y", action="store_true", default=False,
+        help="Skip confirmation prompt.",
+    )
+
     # -- amend ---------------------------------------------------------------
     p_amend = sub.add_parser(
         "amend",
@@ -652,6 +671,10 @@ def main() -> None:
     elif args.cmd == "stop":
         from bd_track.track import cmd_stop
         cmd_stop(args.issue_id, clean=args.clean, session_id=args.session_id, at=args.at)
+    elif args.cmd == "cancel":
+        from bd_track.track import cmd_cancel
+        cmd_cancel(args.interval_id, yes=args.yes, session_id=args.session_id,
+                   project_dir=_resolve_project_scope(args))
     elif args.cmd == "amend":
         from bd_track.track import cmd_amend
         cmd_amend(

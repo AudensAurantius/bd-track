@@ -27,6 +27,7 @@ from bd_track.aggregate import (
 from bd_track.billing import get_issue, load_sidecar, resolve_tuple
 from bd_track.events import (
     _UNSET,
+    cancel_interval,
     correct_interval,
     log_dir,
     resolve_provenance,
@@ -210,6 +211,55 @@ def cmd_switch(issue_id: str, *, from_issue_id: str | None = None,
     """Stop the current interval and start one on ``issue_id`` (composition)."""
     cmd_stop(from_issue_id, clean=False, session_id=session_id)
     cmd_start(issue_id, session_id=session_id)
+
+
+# ---------------------------------------------------------------------------
+# cancel
+# ---------------------------------------------------------------------------
+
+def cmd_cancel(
+    interval_id: str,
+    *,
+    yes: bool = False,
+    session_id: str | None = None,
+    project_dir: Path | None = None,
+) -> None:
+    """Drop an interval from aggregation by appending a cancel event."""
+    project_root = _project_root(project_dir)
+
+    # Find interval by full ULID or unique prefix.
+    all_intervals = {iv.interval: iv for iv in load_intervals(log_dir(project_root))}
+    prefix = interval_id.upper()
+    matches = {ulid: iv for ulid, iv in all_intervals.items() if ulid.startswith(prefix)}
+    if not matches:
+        root_log.error("interval %s not found", interval_id)
+        sys.exit(1)
+    if len(matches) > 1:
+        root_log.error("interval prefix %s is ambiguous (%d matches)", interval_id, len(matches))
+        sys.exit(1)
+    resolved_id, iv = next(iter(matches.items()))
+
+    if iv.status == "cancelled":
+        root_log.info("interval %s is already cancelled", resolved_id[:8])
+        return
+
+    bead_label = f"  bead: {iv.bead}" if iv.bead else ""
+    start_label = f"  start: {iv.start}" if iv.start else ""
+    if not yes:
+        print(f"Cancel interval {resolved_id[:8]}?{bead_label}{start_label}")
+        try:
+            answer = input("  Confirm [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(1)
+        if answer not in ("y", "yes"):
+            root_log.info("cancelled — no action taken")
+            return
+
+    sid = resolve_session_id(project_root, explicit=session_id)
+    cancel_interval(resolved_id, session_id=sid, project_dir=project_root)
+    root_log.info("Cancelled interval %s%s", resolved_id[:8],
+                  f" ({iv.bead})" if iv.bead else "")
 
 
 # ---------------------------------------------------------------------------
