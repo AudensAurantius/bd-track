@@ -254,6 +254,60 @@ def get_cli_arguments() -> argparse.Namespace:
         help="Skip the post-stop queue sweep for closed/deferred beads.",
     )
 
+    # -- amend ---------------------------------------------------------------
+    p_amend = sub.add_parser(
+        "amend",
+        help="Correct an existing interval's timestamps, tags, or provenance.",
+        description=(
+            "Appends a correction event for the given interval ULID (or unique "
+            "8-character prefix), overriding any subset of start/stop timestamps, "
+            "tags, and provenance fields. The aggregator applies corrections per-"
+            "field with latest-eid-wins semantics — the original event is never "
+            "modified. Corrections land in the current session's log regardless of "
+            "which session originated the interval.\n\n"
+            "Tag manipulation: three mutually-exclusive surfaces.\n"
+            "  --add-tag/--remove-tag  explicit incremental edits (repeatable)\n"
+            "  --tag +foo / --tag ~foo  shorthand; ~ avoids argparse - collision\n"
+            "  --tags foo,bar,...       wholesale replace (comma-delimited)\n"
+            "--tags is mutually exclusive with --add-tag/--remove-tag/--tag."
+        ),
+        formatter_class=HelpFormatter,
+    )
+    p_amend.add_argument("interval_id", metavar="<interval-id>",
+                         help="Full interval ULID or unique 8-character prefix.")
+    p_amend.add_argument(
+        "--start", metavar="<datetime>", default=None,
+        help="Override start time (natural language or ISO-8601).",
+    )
+    p_amend.add_argument(
+        "--stop", metavar="<datetime>", default=None,
+        help="Override stop time (natural language or ISO-8601).",
+    )
+    p_amend.add_argument(
+        "--add-tag", dest="add_tags", action="append", default=[], metavar="<tag>",
+        help="Add a tag (repeatable; mutually exclusive with --tags).",
+    )
+    p_amend.add_argument(
+        "--remove-tag", dest="remove_tags", action="append", default=[], metavar="<tag>",
+        help="Remove a tag (repeatable; mutually exclusive with --tags).",
+    )
+    p_amend.add_argument(
+        "--tag", dest="tag_ops", action="append", default=[], metavar="+tag|~tag",
+        help="Add (+tag) or remove (~tag) a tag shorthand (repeatable; "
+             "mutually exclusive with --tags).",
+    )
+    p_amend.add_argument(
+        "--tags", dest="tags_csv", default=None, metavar="<tag,tag,...>",
+        help="Wholesale-replace the tag list (comma-delimited; "
+             "mutually exclusive with --add-tag/--remove-tag/--tag).",
+    )
+    p_amend.add_argument("--actor", default=None, metavar="<str>",
+                         help="Override actor field.")
+    p_amend.add_argument("--role", default=None, metavar="<str>",
+                         help="Override role field.")
+    p_amend.add_argument("--group-id", dest="group_id", default=None, metavar="<str>",
+                         help="Override group_id field.")
+
     # -- switch --------------------------------------------------------------
     p_switch = sub.add_parser(
         "switch",
@@ -598,6 +652,22 @@ def main() -> None:
     elif args.cmd == "stop":
         from bd_track.track import cmd_stop
         cmd_stop(args.issue_id, clean=args.clean, session_id=args.session_id, at=args.at)
+    elif args.cmd == "amend":
+        from bd_track.track import cmd_amend
+        cmd_amend(
+            args.interval_id,
+            start=args.start,
+            stop=args.stop,
+            add_tags=args.add_tags,
+            remove_tags=args.remove_tags,
+            tag_ops=args.tag_ops,
+            tags_csv=args.tags_csv,
+            actor=args.actor,
+            role=args.role,
+            group_id=args.group_id,
+            session_id=args.session_id,
+            project_dir=_resolve_project_scope(args),
+        )
     elif args.cmd == "switch":
         from bd_track.track import cmd_switch
         cmd_switch(args.issue_id, from_issue_id=args.from_issue_id,

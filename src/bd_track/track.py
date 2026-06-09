@@ -25,7 +25,14 @@ from bd_track.aggregate import (
     report,
 )
 from bd_track.billing import get_issue, load_sidecar, resolve_tuple
-from bd_track.events import log_dir, resolve_provenance, start_interval, stop_interval
+from bd_track.events import (
+    _UNSET,
+    correct_interval,
+    log_dir,
+    resolve_provenance,
+    start_interval,
+    stop_interval,
+)
 from bd_track.session import resolve_session_id
 from bd_track.util import find_beads_dir, record_activity, root_log
 
@@ -203,6 +210,143 @@ def cmd_switch(issue_id: str, *, from_issue_id: str | None = None,
     """Stop the current interval and start one on ``issue_id`` (composition)."""
     cmd_stop(from_issue_id, clean=False, session_id=session_id)
     cmd_start(issue_id, session_id=session_id)
+
+
+# ---------------------------------------------------------------------------
+# amend
+# ---------------------------------------------------------------------------
+
+def cmd_amend(
+    interval_id: str,
+    *,
+    start: str | None = None,
+    stop: str | None = None,
+    add_tags: list[str] | None = None,
+    remove_tags: list[str] | None = None,
+    tag_ops: list[str] | None = None,
+    tags_csv: str | None = None,
+    actor: str | None = None,
+    role: str | None = None,
+    group_id: str | None = None,
+    session_id: str | None = None,
+    project_dir: Path | None = None,
+) -> None:
+    """Correct an existing interval's timestamps, tags, or provenance fields."""
+    from bd_track.util import parse_datetime
+
+    project_root = _project_root(project_dir)
+
+    # Validate tag surface mutual exclusivity.
+    incremental = bool(add_tags or remove_tags or tag_ops)
+    if incremental and tags_csv is not None:
+        root_log.error("--tags cannot be combined with --add-tag/--remove-tag/--tag")
+        sys.exit(1)
+
+    # Find interval by full ULID or unique prefix.
+    all_intervals = {iv.interval: iv for iv in load_intervals(log_dir(project_root))}
+    prefix = interval_id.upper()
+    matches = {ulid: iv for ulid, iv in all_intervals.items() if ulid.startswith(prefix)}
+    if not matches:
+        root_log.error("interval %s not found", interval_id)
+        sys.exit(1)
+    if len(matches) > 1:
+        root_log.error("interval prefix %s is ambiguous (%d matches)", interval_id, len(matches))
+        sys.exit(1)
+    resolved_id, iv = next(iter(matches.items()))
+
+    if iv.status == "cancelled":
+        root_log.error("interval %s is cancelled; cannot amend a cancelled interval",
+                       resolved_id[:8])
+        sys.exit(1)
+
+    # Parse timestamps.
+    start_iso: str | None = None
+    stop_iso: str | None = None
+    if start is not None:
+        try:
+            start_iso = parse_datetime(start).isoformat(timespec="seconds")
+        except ValueError as exc:
+            root_log.error("--start: %s", exc)
+            sys.exit(1)
+    if stop is not None:
+        try:
+            stop_dt = parse_datetime(stop)
+        except ValueError as exc:
+            root_log.error("--stop: %s", exc)
+            sys.exit(1)
+        if stop_dt > dt.datetime.now().astimezone():
+            root_log.error("--stop timestamp is in the future: %s", stop_dt.isoformat())
+            sys.exit(1)
+        stop_iso = stop_dt.isoformat(timespec="seconds")
+
+    # Validate effective start < stop.
+    eff_start = start_iso or iv.start
+    eff_stop = stop_iso or iv.stop
+    if eff_start and eff_stop:
+        if dt.datetime.fromisoformat(eff_stop) <= dt.datetime.fromisoformat(eff_start):
+            root_log.error("stop must be after start (%s >= %s)", eff_stop, eff_start)
+            sys.exit(1)
+
+    # Compute new tag list.
+    new_tags: list[str] | None = None
+    if tags_csv is not None:
+        new_tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
+    elif incremental:
+        add_from_ops: list[str] = []
+        rem_from_ops: list[str] = []
+        for op in (tag_ops or []):
+            if op.startswith("+"):
+                add_from_ops.append(op[1:])
+            elif op.startswith("~"):
+                rem_from_ops.append(op[1:])
+            else:
+                root_log.error("--tag: expected +tag or ~tag, got: %s", op)
+                sys.exit(1)
+        all_adds = set(add_tags or []) | set(add_from_ops)
+        all_removes = set(remove_tags or []) | set(rem_from_ops)
+        for t in all_removes:
+            if t not in iv.tags:
+                root_log.warning("--remove-tag / ~prefix: tag %r not present on interval %s",
+                                 t, resolved_id[:8])
+        current = (set(iv.tags) - all_removes) | all_adds
+        new_tags = sorted(current)
+
+    # Nothing to change?
+    if (start_iso is None and stop_iso is None and new_tags is None
+            and actor is None and role is None and group_id is None):
+        root_log.error(
+            "amend: nothing to change — specify at least one of "
+            "--start, --stop, --tags, --add-tag, --remove-tag, --tag, "
+            "--actor, --role, --group-id",
+        )
+        sys.exit(1)
+
+    sid = resolve_session_id(project_root, explicit=session_id)
+    correct_interval(
+        resolved_id,
+        session_id=sid,
+        start=start_iso,
+        stop=stop_iso,
+        tags=new_tags,
+        actor=actor if actor is not None else _UNSET,
+        role=role if role is not None else _UNSET,
+        group_id=group_id if group_id is not None else _UNSET,
+        project_dir=project_root,
+    )
+
+    if start_iso is not None:
+        root_log.info("Amended start:    %s", start_iso)
+    if stop_iso is not None:
+        root_log.info("Amended stop:     %s", stop_iso)
+    if new_tags is not None:
+        root_log.info("Amended tags:     %s", ", ".join(new_tags) or "(none)")
+    if actor is not None:
+        root_log.info("Amended actor:    %s", actor)
+    if role is not None:
+        root_log.info("Amended role:     %s", role)
+    if group_id is not None:
+        root_log.info("Amended group_id: %s", group_id)
+    root_log.info("Correction appended for interval %s", resolved_id[:8])
 
 
 # ---------------------------------------------------------------------------
