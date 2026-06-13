@@ -37,12 +37,10 @@ bd-track = "bd_track.cli:main"
 # the bd-timew → bd-track transition. Remove in a later release.
 bd-timew = "bd_track.cli:main_deprecated"
 
-# NOTE: the GitHub repo is still named 'bd-timew'; these URLs track the real
-# remote. Update if/when the repo is renamed to bd-track.
 [project.urls]
-Homepage = "https://github.com/AudensAurantius/bd-timew"
-Repository = "https://github.com/AudensAurantius/bd-timew"
-Issues = "https://github.com/AudensAurantius/bd-timew/issues"
+Homepage = "https://github.com/AudensAurantius/bd-track"
+Repository = "https://github.com/AudensAurantius/bd-track"
+Issues = "https://github.com/AudensAurantius/bd-track/issues"
 
 [dependency-groups]
 dev = [
